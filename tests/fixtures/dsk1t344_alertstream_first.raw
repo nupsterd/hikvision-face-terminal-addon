@@ -1,0 +1,1175 @@
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 533
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:23:54-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1024,
+		"serialNo":	1,
+		"currentEvent":	false,
+		"frontSerialNo":	0,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 569
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:23:54-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	22,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	2,
+		"currentEvent":	false,
+		"frontSerialNo":	1,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 569
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:23:54-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	23,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	3,
+		"currentEvent":	false,
+		"frontSerialNo":	2,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 569
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:23:54-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	25,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	4,
+		"currentEvent":	false,
+		"frontSerialNo":	3,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 569
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:23:54-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	21,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	5,
+		"currentEvent":	false,
+		"frontSerialNo":	4,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 569
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:23:59-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	22,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	6,
+		"currentEvent":	false,
+		"frontSerialNo":	5,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 531
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:23:59-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	39,
+		"serialNo":	7,
+		"currentEvent":	false,
+		"frontSerialNo":	6,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 579
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:24:00-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1031,
+		"cardReaderKind":	1,
+		"InternetAccess":	1,
+		"serialNo":	8,
+		"currentEvent":	false,
+		"frontSerialNo":	7,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 533
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:24:01-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1031,
+		"serialNo":	9,
+		"currentEvent":	false,
+		"frontSerialNo":	8,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 575
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2025-07-26T00:24:02-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	1,
+		"subEventType":	1032,
+		"cardReaderKind":	1,
+		"alarmInNo":	1,
+		"serialNo":	10,
+		"currentEvent":	false,
+		"frontSerialNo":	9,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T08:51:43-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1024,
+		"serialNo":	11,
+		"currentEvent":	false,
+		"frontSerialNo":	10,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 571
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T08:51:43-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	22,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	12,
+		"currentEvent":	false,
+		"frontSerialNo":	11,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 533
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T08:51:48-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	39,
+		"serialNo":	13,
+		"currentEvent":	false,
+		"frontSerialNo":	12,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 581
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T08:51:48-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1031,
+		"cardReaderKind":	1,
+		"InternetAccess":	1,
+		"serialNo":	14,
+		"currentEvent":	false,
+		"frontSerialNo":	13,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T08:51:50-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1031,
+		"serialNo":	15,
+		"currentEvent":	false,
+		"frontSerialNo":	14,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T08:51:51-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	1,
+		"subEventType":	1028,
+		"serialNo":	16,
+		"currentEvent":	false,
+		"frontSerialNo":	15,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 570
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:34:54-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	3,
+		"subEventType":	241,
+		"remoteHostAddr":	"192.168.0.22",
+		"serialNo":	17,
+		"currentEvent":	false,
+		"frontSerialNo":	16,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 570
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:38:48-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	3,
+		"subEventType":	112,
+		"remoteHostAddr":	"192.168.0.22",
+		"serialNo":	18,
+		"currentEvent":	false,
+		"frontSerialNo":	17,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 534
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:44:44-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	3,
+		"subEventType":	123,
+		"serialNo":	19,
+		"currentEvent":	false,
+		"frontSerialNo":	18,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:45:20-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1024,
+		"serialNo":	20,
+		"currentEvent":	false,
+		"frontSerialNo":	19,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 571
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:45:20-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	22,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	21,
+		"currentEvent":	false,
+		"frontSerialNo":	20,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 533
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:45:27-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	39,
+		"serialNo":	22,
+		"currentEvent":	false,
+		"frontSerialNo":	21,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 581
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:45:28-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1031,
+		"cardReaderKind":	1,
+		"InternetAccess":	1,
+		"serialNo":	23,
+		"currentEvent":	false,
+		"frontSerialNo":	22,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:45:30-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1031,
+		"serialNo":	24,
+		"currentEvent":	false,
+		"frontSerialNo":	23,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:45:34-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	1,
+		"subEventType":	1028,
+		"serialNo":	25,
+		"currentEvent":	false,
+		"frontSerialNo":	24,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 570
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T09:45:49-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	3,
+		"subEventType":	112,
+		"remoteHostAddr":	"192.168.0.22",
+		"serialNo":	26,
+		"currentEvent":	false,
+		"frontSerialNo":	25,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T10:03:48-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	3,
+		"subEventType":	1078,
+		"serialNo":	27,
+		"currentEvent":	false,
+		"frontSerialNo":	26,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 570
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T10:52:46-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	3,
+		"subEventType":	112,
+		"remoteHostAddr":	"192.168.0.22",
+		"serialNo":	28,
+		"currentEvent":	false,
+		"frontSerialNo":	27,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 805
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T10:59:20-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	75,
+		"name":	"David",
+		"cardReaderKind":	1,
+		"cardReaderNo":	1,
+		"employeeNoString":	"6617508710",
+		"serialNo":	29,
+		"userType":	"normal",
+		"currentVerifyMode":	"faceOrFpOrCardOrPw",
+		"currentEvent":	false,
+		"frontSerialNo":	28,
+		"label":	"",
+		"mask":	"no",
+		"purePwdVerifyEnable":	true,
+		"FaceRect":	{
+			"height":	0.517,
+			"width":	0.293,
+			"x":	0.35,
+			"y":	0.255
+		}
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 571
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T10:59:21-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	21,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	30,
+		"currentEvent":	false,
+		"frontSerialNo":	29,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 571
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T10:59:26-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	22,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	31,
+		"currentEvent":	false,
+		"frontSerialNo":	30,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 811
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T11:07:34-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	75,
+		"name":	"Daniel Rios",
+		"cardReaderKind":	1,
+		"cardReaderNo":	1,
+		"employeeNoString":	"1428168725",
+		"serialNo":	32,
+		"userType":	"normal",
+		"currentVerifyMode":	"faceOrFpOrCardOrPw",
+		"currentEvent":	false,
+		"frontSerialNo":	31,
+		"label":	"",
+		"mask":	"no",
+		"purePwdVerifyEnable":	true,
+		"FaceRect":	{
+			"height":	0.111,
+			"width":	0.063,
+			"x":	0.45,
+			"y":	0.398
+		}
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 571
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T11:07:34-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	21,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	33,
+		"currentEvent":	false,
+		"frontSerialNo":	32,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 571
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-02-26T11:07:39-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	22,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	34,
+		"currentEvent":	false,
+		"frontSerialNo":	33,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-07-10T16:28:15-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1024,
+		"serialNo":	35,
+		"currentEvent":	false,
+		"frontSerialNo":	34,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 571
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-07-10T16:28:16-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	22,
+		"cardReaderKind":	1,
+		"doorNo":	1,
+		"serialNo":	36,
+		"currentEvent":	false,
+		"frontSerialNo":	35,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 533
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-07-10T16:28:25-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	39,
+		"serialNo":	37,
+		"currentEvent":	false,
+		"frontSerialNo":	36,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 579
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-07-10T16:28:25-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	39,
+		"cardReaderKind":	1,
+		"InternetAccess":	1,
+		"serialNo":	38,
+		"currentEvent":	false,
+		"frontSerialNo":	37,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-07-10T16:28:28-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	1,
+		"subEventType":	1028,
+		"serialNo":	39,
+		"currentEvent":	false,
+		"frontSerialNo":	38,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 535
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-07-10T16:28:30-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	2,
+		"subEventType":	1031,
+		"serialNo":	40,
+		"currentEvent":	false,
+		"frontSerialNo":	39,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary
+Content-Disposition: form-data; name="AccessControllerEvent"
+Content-Type: application/json; charset="UTF-8"
+Content-Length: 622
+
+{
+	"ipAddress":	"192.168.18.202",
+	"portNo":	443,
+	"protocol":	"HTTPS",
+	"macAddress":	"a4:d5:c2:75:fd:64",
+	"channelID":	1,
+	"dateTime":	"2026-07-10T16:36:49-05:00",
+	"activePostCount":	1,
+	"eventType":	"AccessControllerEvent",
+	"eventState":	"active",
+	"eventDescription":	"Access Controller Event",
+	"AccessControllerEvent":	{
+		"deviceName":	"Terminal Facial Torre 1",
+		"majorEventType":	5,
+		"subEventType":	39,
+		"cardReaderKind":	1,
+		"cardReaderNo":	1,
+		"serialNo":	41,
+		"currentVerifyMode":	"faceOrFpOrCardOrPw",
+		"currentEvent":	false,
+		"frontSerialNo":	40,
+		"label":	"",
+		"purePwdVerifyEnable":	true
+	}
+}
+--MIME_boundary

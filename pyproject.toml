@@ -1,0 +1,13 @@
+[project]
+name = "hikvision-face-terminal"
+version = "1.0.0a0"
+description = "Hikvision DS-K1T344 face terminal ISAPI event listener for Home Assistant"
+requires-python = ">=3.11"
+dependencies = ["requests>=2.28"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-cov>=5"]

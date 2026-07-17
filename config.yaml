@@ -1,0 +1,52 @@
+name: Hikvision Face Terminal Listener
+version: "1.0.0-alpha"
+slug: hikvision_face_terminal
+description: >
+  Listener del Event Stream ISAPI del terminal biométrico peatonal Hikvision
+  DS-K1T344MBFWX-E1 (firmware V4.31). Audita todos los eventos en JSON Lines
+  local y hace fan-out al backend pv-backend. El terminal solo REPORTA: la
+  apertura del electroimán la sigue liberando la DS-K2624X vía Remote Unlock.
+
+arch:
+  - aarch64
+  - amd64
+  - armhf
+  - armv7
+  - i386
+
+startup: services
+boot: auto
+init: false
+
+options:
+  terminal_host: "192.168.18.202"
+  terminal_user: "admin"
+  terminal_password: ""
+  ha_webhook_url: ""
+  audit_log_path: "/config/face_audit.log"
+  edificio_slug: ""
+  puerta_slug: "peatonal-principal"
+  reconnect_delay: 5
+  stream_idle_timeout: 30
+  backend_url: ""
+  backend_secret: ""
+  backend_queue_maxsize: 1000
+  backend_timeout_seconds: 3
+
+schema:
+  terminal_host: str
+  terminal_user: str
+  terminal_password: password
+  ha_webhook_url: "url?"
+  audit_log_path: str
+  edificio_slug: "str?"
+  puerta_slug: str
+  reconnect_delay: int(1,300)
+  stream_idle_timeout: int(5,300)
+  backend_url: "str?"
+  backend_secret: "password?"
+  backend_queue_maxsize: "int(10,100000)"
+  backend_timeout_seconds: "int(1,30)"
+
+map:
+  - addon_config:rw    # monta /config -> /addon_configs/<slug>/ (visible desde core-ssh)

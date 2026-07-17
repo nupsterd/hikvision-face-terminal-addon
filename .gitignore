@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv
+
+# Logs locales del listener
+*.log
+audit/
+data/
+
+# Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# HA add-on build artifacts
+.build/
+
+# Test/venv artifacts
+.pytest_cache/
+.coverage
+coverage.xml
