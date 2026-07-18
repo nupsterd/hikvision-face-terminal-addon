@@ -1,5 +1,5 @@
 name: Hikvision Face Terminal Listener
-version: "1.0.0-alpha"
+version: "1.0.1-alpha-hotfix1"
 slug: hikvision_face_terminal
 description: >
   Listener del Event Stream ISAPI del terminal biométrico peatonal Hikvision
@@ -23,6 +23,7 @@ options:
   terminal_user: "admin"
   terminal_password: ""
   ha_webhook_url: ""
+  ha_webhook_timeout_seconds: 3
   audit_log_path: "/config/face_audit.log"
   edificio_slug: ""
   puerta_slug: "peatonal-principal"
@@ -38,6 +39,7 @@ schema:
   terminal_user: str
   terminal_password: password
   ha_webhook_url: "url?"
+  ha_webhook_timeout_seconds: int(1,30)
   audit_log_path: str
   edificio_slug: "str?"
   puerta_slug: str

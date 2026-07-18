@@ -1,4 +1,4 @@
-"""Tests unitarios del parser: 18 EVENT_TYPES canonical + casos especiales."""
+"""Tests unitarios del parser: 19 EVENT_TYPES canonical v1.3 + casos especiales."""
 
 from __future__ import annotations
 
@@ -49,13 +49,15 @@ def make_ace_body(
     return json.dumps(event).encode("utf-8")
 
 
-# --- 18 tests: uno por cada EVENT_TYPE canonical v1.2 ---
+# --- 19 tests: uno por cada EVENT_TYPE canonical v1.3 ---
+# Parametrización data-driven desde EVENT_TYPES: cubre automáticamente (5,1)
+# "Card Auth Passed" y (5,38) "Fingerprint Auth Passed" (§5.9.507 + §14.35).
 
 @pytest.mark.parametrize(("major", "sub", "description"), sorted(
     (m, s, d) for (m, s), d in EVENT_TYPES.items()
 ))
 def test_event_type_canonical_parsea_con_descripcion(major, sub, description, log):
-    """Cada uno de los 18 (major, sub) canonical parsea con su descripción."""
+    """Cada uno de los 19 (major, sub) canonical parsea con su descripción."""
     body = make_ace_body(major, sub)
     event = parse_event_block(body, log)
     assert event is not None
@@ -65,9 +67,15 @@ def test_event_type_canonical_parsea_con_descripcion(major, sub, description, lo
     assert event["description"] == description
 
 
-def test_hay_exactamente_18_event_types():
-    """Consolidación §5.9.X: la tabla canonical v1.2 tiene 18 entradas."""
-    assert len(EVENT_TYPES) == 18
+def test_hay_exactamente_19_event_types():
+    """Consolidación §5.9.507 + §14.35: la tabla canonical v1.3 tiene 19 entradas.
+
+    v1.2 (18) + (5,1) "Card Auth Passed" = 19. (5,38) se preservó con la
+    description corregida a "Fingerprint Auth Passed" (era mislabel §14.35).
+    """
+    assert len(EVENT_TYPES) == 19
+    assert EVENT_TYPES[(5, 1)] == "Card Auth Passed"
+    assert EVENT_TYPES[(5, 38)] == "Fingerprint Auth Passed"
 
 
 # --- Casos especiales ---

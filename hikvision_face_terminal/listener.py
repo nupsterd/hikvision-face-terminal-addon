@@ -71,6 +71,9 @@ class Config:
     backend_secret: str = ""
     backend_queue_maxsize: int = 1000
     backend_timeout_seconds: int = 3
+    # Timeout del POST síncrono al webhook HA post-auth OK (side-effect
+    # defensivo). Default 3s; rango 1-30s (schema config.yaml).
+    ha_webhook_timeout_seconds: int = 3
 
     @classmethod
     def from_options_json(cls, path: str = "/data/options.json") -> "Config":
@@ -82,6 +85,7 @@ class Config:
             terminal_user=opts["terminal_user"],
             terminal_password=opts["terminal_password"],
             ha_webhook_url=opts.get("ha_webhook_url", ""),
+            ha_webhook_timeout_seconds=int(opts.get("ha_webhook_timeout_seconds", 3)),
             audit_log_path=Path(opts.get("audit_log_path", "/config/face_audit.log")),
             edificio_slug=opts.get("edificio_slug", ""),
             puerta_slug=opts.get("puerta_slug", "peatonal-principal"),
@@ -95,13 +99,19 @@ class Config:
 
 
 # ---------------------------------------------------------------------------
-# Diccionario de eventos Hikvision del DS-K1T344 (18 EVENT_TYPES canonical v1.2)
+# Diccionario de eventos Hikvision del DS-K1T344 (19 EVENT_TYPES canonical v1.3)
 # (major_event_type, sub_event_type) -> descripción humana
 #
 # 18 = tabla completa consolidada (§5.9.X sub-chat 4c). Los "14 EVENT_TYPES"
 # del handoff §14.35 eran el conteo empírico de eventos live F4 (13 gestos +
 # 1 tamper); los 18 incluyen los eventos del buffer histórico F3.4 (Major 2/3
 # de boot, internet access y ops admin) capturados en dsk1t344_alertstream_first.
+#
+# v1.3 (§5.9.507 Chat 7 S10 + §14.35 F4 reconciliados): +1 → 19 entries. Se
+# agregó (5,1) "Card Auth Passed" (empírico 3 gestos card Chat 7 S10; F4 no lo
+# capturó porque el enroll de tarjetas Mifare estaba postpuesto §5.9.447) y se
+# corrigió (5,38) de "Auth Passed non-face" mislabel a "Fingerprint Auth Passed"
+# (el gesto (5,38) de F4 era fingerprint OK, no card).
 # ---------------------------------------------------------------------------
 
 EVENT_TYPES: dict[tuple[int, int], str] = {
@@ -119,11 +129,12 @@ EVENT_TYPES: dict[tuple[int, int], str] = {
     (3, 241): "Unknown Admin Op 241",
     (3, 1078): "Unknown Admin Op 1078",
     # Major 5 (Access Control Events)
+    (5, 1): "Card Auth Passed",
     (5, 21): "Door Unlocked (relé interno del terminal)",
     (5, 22): "Door Locked (relé interno del terminal)",
     (5, 23): "Exit Button Pressed",
     (5, 25): "Door Closed (sensor)",
-    (5, 38): "Auth Passed non-face (fp/card/PIN multi-modal)",
+    (5, 38): "Fingerprint Auth Passed",
     (5, 39): "Auth Failed non-face",
     (5, 75): "Face Auth Passed",
     (5, 76): "Face Auth Failed",
@@ -492,6 +503,99 @@ def forward_to_ha(webhook_url: str, event: dict, log: logging.Logger) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Emit HTTP POST al webhook HA post-auth OK (§5.9.507 Chat 7 S10)
+#
+# Side-effect DEFENSIVO y aditivo: se dispara DESPUÉS del fan-out al backend +
+# audit (que son la fuente primaria de verdad). Cierra la brecha empírica
+# §5.9.491: el flow face → apertura DS-K1T344 llega ahora al policy engine del
+# backend por su canal primario Y al automation policy-gate Nivel B de HA por
+# este webhook. Cero rollback del fan-out ante fallo del webhook.
+#
+# NOTA arquitectural: el diseño cerrado del Chat 7 asumía un Listener de clase
+# con `self.edificio_slug`/`self.puerta_slug`; la arquitectura real es funcional
+# (run(cfg, log)). `edificio_slug`/`puerta_slug` NO viven en el `record` (no los
+# proyecta build_audit_record), así que se pasan explícitos desde `cfg` para no
+# tocar el parser ni el audit ni el fan-out backend (aditividad pura). `name`
+# sí vive en el record vía `raw.AccessControllerEvent.name`.
+# ---------------------------------------------------------------------------
+
+# §5.9.475: URL dummy legacy sembrada en instalaciones v1.0.0-alpha como
+# placeholder de funcionalidad no implementada. Se salta para backward compat.
+DUMMY_HA_WEBHOOK_URL = "http://127.0.0.1:9999/unused"
+
+
+def _maybe_emit_ha_webhook(
+    record: dict,
+    ha_webhook_url: str,
+    timeout_seconds: int,
+    edificio_slug: str = "",
+    puerta_slug: str = "",
+) -> None:
+    """Emit HTTP POST síncrono al webhook HA si el evento es auth OK.
+
+    Discriminador (AND): kind==access_controller_event, major==5, sub in (75,1)
+    (Face Auth Passed / Card Auth Passed), employee_no poblado, y ha_webhook_url
+    no vacío ni dummy §5.9.475. El payload es un subset del record (más name /
+    edificio_slug / puerta_slug). Fail-silent total: cualquier error se loguea
+    en warning y NO se re-raisea — el fan-out backend + audit ya ocurrieron.
+    """
+    url = (ha_webhook_url or "").strip()
+    if not url or url == DUMMY_HA_WEBHOOK_URL:
+        return  # skip dummy/vacío (backward compat v1.0.0-alpha)
+
+    if record.get("kind") != "access_controller_event":
+        return
+    if record.get("major") != 5:
+        return
+    if record.get("sub") not in (75, 1):
+        return
+    if record.get("employee_no") is None:
+        return
+
+    log = logging.getLogger("hikvision-face-terminal")
+
+    # `name` humano no se proyecta al record; se lee del raw AccessControllerEvent.
+    ace = (record.get("raw") or {}).get("AccessControllerEvent") or {}
+    name = ace.get("name")
+
+    payload = {
+        "major": record.get("major"),
+        "sub": record.get("sub"),
+        "sub_name": record.get("sub_name"),
+        "device_kind": record.get("device_kind"),
+        "employee_no": record.get("employee_no"),
+        "name": name,
+        "card_no": record.get("card_no"),
+        "face_rect": record.get("face_rect"),
+        "verify_mode": record.get("verify_mode"),
+        "device_ip": record.get("device_ip"),
+        "device_mac": record.get("device_mac"),
+        "device_ts": record.get("device_ts"),
+        "received_ts": record.get("received_ts"),
+        "edificio_slug": edificio_slug,
+        "puerta_slug": puerta_slug,
+    }
+
+    try:
+        # Sin header auth custom: HA valida por webhook_id inadivinable en la URL.
+        requests.post(url, json=payload, timeout=timeout_seconds, verify=False)
+        log.info(
+            "event=ha_webhook_emit_ok major=%s sub=%s employee_no=%s name=%s",
+            record.get("major"), record.get("sub"),
+            record.get("employee_no"), name,
+        )
+    except (requests.exceptions.Timeout,
+            requests.exceptions.RequestException, Exception) as exc:
+        # Side-effect defensivo: NO re-raise, NO rollback del fan-out backend.
+        log.warning(
+            "event=ha_webhook_emit_falla error=%s ha_webhook_url=%s "
+            "major=%s sub=%s employee_no=%s",
+            str(exc), url,
+            record.get("major"), record.get("sub"), record.get("employee_no"),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Loop principal: conecta, escucha, reconecta
 # ---------------------------------------------------------------------------
 
@@ -574,6 +678,15 @@ def run(cfg: Config, log: logging.Logger) -> None:
                     audit.write(record)
                     # Fan-out al backend (canal primario M2; no-op si deshabilitado).
                     forwarder.enqueue(record)
+                    # Emit HTTP POST al webhook HA post-auth OK (§5.9.507). Side-
+                    # effect defensivo tras el fan-out backend; discrimina adentro.
+                    _maybe_emit_ha_webhook(
+                        record,
+                        cfg.ha_webhook_url,
+                        cfg.ha_webhook_timeout_seconds,
+                        cfg.edificio_slug,
+                        cfg.puerta_slug,
+                    )
 
                     # Filtrado para HA (hoy siempre False en el M2 face terminal).
                     if event.get("kind") == "access_controller_event":
@@ -689,6 +802,14 @@ def main() -> None:
         cfg.backend_queue_maxsize,
         cfg.backend_timeout_seconds,
     )
+    _ha_url = (cfg.ha_webhook_url or "").strip()
+    if not _ha_url or _ha_url == DUMMY_HA_WEBHOOK_URL:
+        log.info("Config HA webhook: skip razon=dummy_url_o_vacio")
+    else:
+        log.info(
+            "Config HA webhook: url=%r timeout=%ds",
+            _ha_url, cfg.ha_webhook_timeout_seconds,
+        )
     log.info(
         "Listener iniciado. Terminal=%s user=%s edificio=%s puerta=%s audit=%s",
         cfg.terminal_host,
