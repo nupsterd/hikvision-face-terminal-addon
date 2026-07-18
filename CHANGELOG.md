@@ -3,6 +3,18 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versionado siguiendo [SemVer](https://semver.org/lang/es/).
 
+## v1.0.1-alpha (2026-07-18)
+
+- **Added**: HA webhook emit post-auth OK (`(5,75)` face + `(5,1)` card empírico
+  §5.9.507 Chat 7 S10) — skip legacy dummy URL para backward compat.
+- **Added**: config setting `ha_webhook_timeout_seconds` (default 3s, range 1-30s).
+- **Fixed**: §5.9.491 brecha empírica flow face → apertura DS-K1T344 → policy
+  engine backend closed empíricamente.
+- **Fixed**: `EVENT_TYPES` dict `(5,38)` description corregida a "Fingerprint
+  Auth Passed" (era "Auth Passed non-face" mislabeled §14.35). Agregado `(5,1)`
+  "Card Auth Passed" empíricamente confirmado en Chat 7 S10 3 gestos card
+  (§5.9.507). Tabla de eventos v1.2 (18 entries) → v1.3 (19 entries).
+
 ## [1.0.0-alpha] - 2026-07-16
 
 Fork greenfield del add-on productivo `hikvision-isapi-addon` v1.2.0 (que

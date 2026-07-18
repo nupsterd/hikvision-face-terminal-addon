@@ -73,7 +73,9 @@ def test_smoke_replay_dsk1t344_f4_capture(dsk1t344_f4_capture_bytes):
     # Correlación de gestos empíricos: los 4 gestos + tamper alarm + restore.
     combos = [(e["major"], e["sub"]) for e in parsed]
     assert (5, 75) in combos   # Face Auth Passed
-    assert (5, 38) in combos   # Auth Passed non-face (fp/card/PIN)
+    assert (5, 38) in combos   # Fingerprint Auth Passed (§14.35 rectificado: el
+                               # gesto (5,38) de F4 era fingerprint OK, no card;
+                               # card es (5,1), no capturado en F4 §5.9.447/§5.9.507)
     assert (5, 39) in combos   # Auth Failed non-face
     assert (5, 76) in combos   # Face Auth Failed
     assert (1, 1029) in combos  # Tamper Alarm
@@ -83,6 +85,9 @@ def test_smoke_replay_dsk1t344_f4_capture(dsk1t344_f4_capture_bytes):
     face_fail = next(e for e in parsed if (e["major"], e["sub"]) == (5, 76))
     assert face_fail["mask"] == "no"
     assert face_fail["description"] == "Face Auth Failed"
+    # El (5,38) del fixture F4 mapea a la description canónica v1.3 rectificada.
+    fp_pass = next(e for e in parsed if (e["major"], e["sub"]) == (5, 38))
+    assert fp_pass["description"] == "Fingerprint Auth Passed"
 
     # Descripciones legibles para todos (ninguno "Unknown").
     assert all(not e["description"].startswith("Unknown") for e in parsed)
