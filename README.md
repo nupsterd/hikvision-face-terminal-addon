@@ -42,6 +42,10 @@ firmware V4.31 del terminal facial.
    para auditoría completa.
 5. Hace **fan-out** de cada record al backend (`POST` con header
    `X-PV-Hikvision-Face-Token`).
+5.5. Si `ha_webhook_url` no es dummy/vacío y el evento es auth OK (face `(5,75)`
+   o card `(5,1)` con `employee_no` poblado), emit HTTP POST síncrono al webhook
+   HA con payload subset del record. Es un **side-effect defensivo** (fail-silent,
+   sin re-raise ni rollback del fan-out backend, que es la fuente primaria).
 6. Reconecta automáticamente si pierde la conexión.
 
 ## Adaptaciones del firmware V4.31 (hallazgos empíricos §5.9.426-451)
@@ -58,7 +62,7 @@ firmware V4.31 del terminal facial.
 > solo se confirma con hardware real. El fallback documentado (forzar HTTP/1.0
 > vía monkeypatch de `http.client`) está en el comentario del `run()`.
 
-## Tabla de eventos (18 EVENT_TYPES canonical v1.2)
+## Tabla de eventos (19 EVENT_TYPES canonical v1.3)
 
 `(majorEventType, subEventType) → descripción`
 
@@ -74,11 +78,12 @@ firmware V4.31 del terminal facial.
 | 3 | 123 | Unknown Admin Op 123 |
 | 3 | 241 | Unknown Admin Op 241 |
 | 3 | 1078 | Unknown Admin Op 1078 |
+| 5 | 1 | Card Auth Passed |
 | 5 | 21 | Door Unlocked (relé interno del terminal) |
 | 5 | 22 | Door Locked (relé interno del terminal) |
 | 5 | 23 | Exit Button Pressed |
 | 5 | 25 | Door Closed (sensor) |
-| 5 | 38 | Auth Passed non-face (fp/card/PIN multi-modal) |
+| 5 | 38 | Fingerprint Auth Passed |
 | 5 | 39 | Auth Failed non-face |
 | 5 | 75 | Face Auth Passed |
 | 5 | 76 | Face Auth Failed |
@@ -90,7 +95,8 @@ firmware V4.31 del terminal facial.
 | `terminal_host` | str | `192.168.18.202` | IP o hostname del terminal DS-K1T344 |
 | `terminal_user` | str | `admin` | Usuario del terminal |
 | `terminal_password` | password | (vacío) | Contraseña del terminal |
-| `ha_webhook_url` | url? | (vacío) | Webhook HA (placeholder, inactivo en el MVP) |
+| `ha_webhook_url` | url? | (vacío) | Webhook HA; emit POST post-auth OK. Vacío o dummy (`http://127.0.0.1:9999/unused`) = deshabilitado |
+| `ha_webhook_timeout_seconds` | int | `3` | Timeout POST al webhook HA (1-30s) |
 | `audit_log_path` | str | `/config/face_audit.log` | Ruta del log de auditoría |
 | `edificio_slug` | str? | (vacío) | Metadata de ubicación para el backend |
 | `puerta_slug` | str | `peatonal-principal` | Metadata de ubicación para el backend |
