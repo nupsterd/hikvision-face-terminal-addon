@@ -27,6 +27,19 @@ versionado siguiendo [SemVer](https://semver.org/lang/es/).
   7 días; un 401 suspende la recuperación de esa conexión sin reintentar (§5.9.574); sin
   MAC del terminal no se recupera. Ninguna opción nueva.
 
+### Fixed (prueba en hardware 2026-10-05)
+- `deviceInfo`: el DS-K1T344 ignora `?format=json` y responde XML con namespace; la
+  recuperación terminaba en "Sin MAC del terminal (deviceInfo HTTP 200)". Ahora se pide
+  `GET /ISAPI/System/deviceInfo` sin formato, se intenta JSON y si no se parsea el XML
+  (elemento cuyo tag termina en `macAddress`, sin importar el namespace).
+- Techo por conexión del cursor: si la recuperación no se completaba (sin MAC, 401, error o
+  corte por tope), las entregas en vivo subían el cursor por encima de seriales nunca vistos
+  y se perdían en silencio. Cada corrida con cursor abre un techo en el cursor efectivo del
+  momento; el cursor (y el persistido) no lo pasa. Corrida completa ⇒ se libera; cortada por
+  tope ⇒ sube al mayor serial admitido; fallida ⇒ queda. Tras un reinicio se retoma desde el
+  cursor persistido congelado (lo entregado en vivo en ese lapso se re-envía y el backend lo
+  absorbe como duplicado). El primer arranque no abre techo; un reset de fábrica lo descarta.
+
 ### Changed
 - `BackendForwarder._post_with_retries` devuelve `True` (2xx) / `False` (4xx) para informar
   el resultado al cursor. `AuditLogger.write` con lock (escriben dos hilos).

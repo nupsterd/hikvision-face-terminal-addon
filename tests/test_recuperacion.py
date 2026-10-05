@@ -48,9 +48,10 @@ HOST = "192.0.2.10"
 # ---------------------------------------------------------------------------
 
 class FakeResp:
-    def __init__(self, status: int = 200, data=None):
+    def __init__(self, status: int = 200, data=None, content: bytes = b""):
         self.status_code = status
         self._data = data
+        self.content = content
 
     def json(self):
         if self._data is None:
@@ -62,13 +63,14 @@ class FakeISAPI:
     """Fake de requests.request para AcsEvent + deviceInfo. Registra cada llamada."""
 
     def __init__(self, *, paginas=None, mac=MAC, rechaza_major0=False, status_acs=200,
-                 status_info=200, reciente=None):
+                 status_info=200, reciente=None, info_xml=False):
         self.paginas = list(paginas or [])  # lista de (estado, items)
         self.mac = mac
         self.rechaza_major0 = rechaza_major0
         self.status_acs = status_acs
         self.status_info = status_info
         self.reciente = reciente  # items para la consulta timeReverseOrder
+        self.info_xml = info_xml  # deviceInfo como el DS-K1T344 real: XML aunque se pida JSON
         self.llamadas: list[tuple[str, str, dict | None, dict]] = []
 
     def __call__(self, metodo, url, json=None, **kwargs):  # noqa: A002 (firma de requests)
@@ -76,6 +78,12 @@ class FakeISAPI:
         if "deviceInfo" in url:
             if self.status_info != 200:
                 return FakeResp(self.status_info)
+            if self.info_xml:
+                mac = "" if self.mac is None else f"<macAddress>{self.mac}</macAddress>"
+                xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+                       '<DeviceInfo version="2.0" xmlns="http://www.isapi.org/ver20/XMLSchema">'
+                       f'<deviceName>Terminal</deviceName>{mac}<model>X</model></DeviceInfo>')
+                return FakeResp(200, None, xml.encode("utf-8"))
             info = {} if self.mac is None else {"macAddress": self.mac}
             return FakeResp(200, {"DeviceInfo": info})
         cond = json["AcsEventCond"]
@@ -690,3 +698,174 @@ def test_logs_de_recuperacion_sin_employee_no_ni_nombre(tmp_path, isapi, caplog)
     assert "5099" not in caplog.text
     assert "PERSONA PRUEBA" not in caplog.text
     assert "desde serial 101, 1 encolados" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# (m) deviceInfo XML (prueba en hardware 5-oct: el terminal ignora ?format=json)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("info_xml", [True, False], ids=["xml", "json"])
+def test_mac_desde_device_info_xml_o_json(tmp_path, isapi, info_xml):
+    fake = isapi(mac="A4:D5:C2:00:00:01", info_xml=info_xml, paginas=[("OK", [item(101)])])
+    seg = seguimiento(tmp_path, cursor=100, mac=None)
+    enviados: list[dict] = []
+    recuperador(seg, enviados.append).correr()
+    url_info = [c[1] for c in fake.llamadas if "deviceInfo" in c[1]]
+    assert url_info == [f"https://{HOST}/ISAPI/System/deviceInfo"]
+    assert enviados[0]["device_mac"] == MAC
+    assert leer_estado(tmp_path)["terminal_mac"] == MAC
+
+
+def test_device_info_xml_sin_mac_no_recupera(tmp_path, isapi, caplog):
+    fake = isapi(mac=None, info_xml=True, paginas=[("OK", [item(101)])])
+    seg = seguimiento(tmp_path, cursor=100, mac=None)
+    with caplog.at_level(logging.WARNING):
+        recuperador(seg, lambda r: None).correr()
+    assert fake.acs() == []
+    assert "Sin MAC del terminal (deviceInfo HTTP 200)" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# (n)-(q) techo por conexión: una recuperación incompleta congela el cursor
+# ---------------------------------------------------------------------------
+
+def _entregar_en_vivo(seg: SeguimientoEntregas, seriales) -> None:
+    for s in seriales:
+        r = {"serial": s}
+        assert seg.admitir(r)
+        seg.entregado(r)
+
+
+def _desde(fake: FakeISAPI) -> list[int]:
+    return [c[2]["AcsEventCond"]["beginSerialNo"] for c in fake.acs()
+            if c[2]["AcsEventCond"]["searchResultPosition"] == 0]
+
+
+def test_sin_mac_el_cursor_no_pasa_el_techo_y_la_corrida_siguiente_libera(tmp_path, isapi):
+    fake = isapi(mac=None, info_xml=True)
+    seg = seguimiento(tmp_path, cursor=100, mac=None)
+    recuperador(seg, lambda r: None).correr()
+    assert seg.techo == 100
+    _entregar_en_vivo(seg, [105, 106, 107])  # 101..104 nunca vistos
+    assert seg.cursor == 100
+    assert leer_estado(tmp_path)["cursor_serial"] == 100
+
+    fake.mac = MAC
+    fake.paginas = [("OK", [item(s) for s in range(101, 108)])]
+    enviados: list[dict] = []
+    resumen = recuperador(seg, enviados.append).correr()
+    assert _desde(fake) == [101]
+    assert [r["serial"] for r in enviados] == [101, 102, 103, 104]
+    assert resumen["ya_vistos"] == 3
+    assert seg.techo is None
+    assert seg.cursor == 100  # liberado, pero los admitidos frenan hasta entregarse
+    for r in enviados:
+        seg.entregado(r)
+    assert seg.cursor == 107
+    assert leer_estado(tmp_path)["cursor_serial"] == 107
+
+
+def test_sin_mac_con_reinicio_retoma_desde_el_cursor_congelado(tmp_path, isapi):
+    fake = isapi(mac=None, info_xml=True)
+    seg = seguimiento(tmp_path, cursor=100, mac=None)
+    recuperador(seg, lambda r: None).correr()
+    _entregar_en_vivo(seg, [105, 106])
+
+    reiniciado = SeguimientoEntregas(EstadoPersistente(tmp_path / "face_state.json", LOG), LOG)
+    assert reiniciado.cursor == 100 and reiniciado.techo is None
+    fake.mac = MAC
+    fake.paginas = [("OK", [item(s) for s in range(101, 107)])]
+    enviados: list[dict] = []
+    recuperador(reiniciado, enviados.append).correr()
+    assert _desde(fake) == [101]
+    # Lo entregado en vivo antes del reinicio se re-envía: el backend lo absorbe como duplicado.
+    assert [r["serial"] for r in enviados] == [101, 102, 103, 104, 105, 106]
+
+
+@pytest.mark.parametrize("status", [401, 500], ids=["401", "respuesta_invalida"])
+def test_abortada_el_cursor_no_pasa_el_techo_y_la_corrida_siguiente_libera(tmp_path, isapi, status):
+    fake = isapi(status_acs=status)
+    seg = seguimiento(tmp_path, cursor=100)
+    r = recuperador(seg, lambda rec_: None)
+    resumen = r.correr()
+    assert resumen["encolados"] == 0
+    assert seg.techo == 100
+    _entregar_en_vivo(seg, [104, 105])
+    assert seg.cursor == 100
+    assert leer_estado(tmp_path)["cursor_serial"] == 100
+
+    fake.status_acs = 200
+    fake.paginas = [("OK", [item(s) for s in range(101, 106)])]
+    enviados: list[dict] = []
+    r.destino = enviados.append
+    r.correr()
+    assert _desde(fake)[-1] == 101
+    assert [x["serial"] for x in enviados] == [101, 102, 103]
+    assert seg.techo is None
+    for x in enviados:
+        seg.entregado(x)
+    assert seg.cursor == 105
+    assert leer_estado(tmp_path)["cursor_serial"] == 105
+
+
+def test_tope_1000_con_1500_el_techo_queda_en_el_milesimo(tmp_path, isapi):
+    fake = isapi(paginas=[("OK", [item(s) for s in range(1, 1501)])])
+    seg = seguimiento(tmp_path, cursor=0)
+    enviados: list[dict] = []
+    resumen = recuperador(seg, enviados.append).correr()
+    assert resumen["encolados"] == 1000
+    assert seg.techo == 1000
+    for r in enviados:
+        seg.entregado(r)
+    _entregar_en_vivo(seg, [1600])
+    assert seg.cursor == 1000
+    assert leer_estado(tmp_path)["cursor_serial"] == 1000
+
+    fake.paginas = [("OK", [item(s) for s in range(1001, 1501)] + [item(1600)])]
+    enviados.clear()
+    resumen = recuperador(seg, enviados.append).correr()
+    assert _desde(fake) == [1, 1001]
+    assert enviados[0]["serial"] == 1001 and enviados[-1]["serial"] == 1500
+    assert resumen["encolados"] == 500 and resumen["ya_vistos"] == 1
+    assert seg.techo is None
+    for r in enviados:
+        seg.entregado(r)
+    assert seg.cursor == 1600
+    assert leer_estado(tmp_path)["cursor_serial"] == 1600
+
+
+def test_paginacion_cortada_sube_el_techo_al_mayor_admitido(tmp_path, isapi, monkeypatch):
+    monkeypatch.setattr(rec, "MAX_PAGINAS", 2)
+    pagina = rec.MAX_RESULTS
+    fake = isapi(paginas=[("MORE", [item(s) for s in range(101 + i * pagina, 101 + (i + 1) * pagina)])
+                          for i in range(3)])
+    seg = seguimiento(tmp_path, cursor=100)
+    enviados: list[dict] = []
+    recuperador(seg, enviados.append).correr()
+    ultimo = 100 + 2 * pagina
+    assert enviados[-1]["serial"] == ultimo
+    assert seg.techo == ultimo
+    for r in enviados:
+        seg.entregado(r)
+    _entregar_en_vivo(seg, [ultimo + 50])
+    assert seg.cursor == ultimo
+
+
+def test_corrida_completa_sin_items_libera_y_el_cursor_sigue_al_vivo(tmp_path, isapi):
+    isapi(paginas=[])
+    seg = seguimiento(tmp_path, cursor=100)
+    resumen = recuperador(seg, lambda r: None).correr()
+    assert resumen["encolados"] == 0
+    assert seg.techo is None
+    _entregar_en_vivo(seg, [101, 102])
+    assert seg.cursor == 102
+    assert leer_estado(tmp_path)["cursor_serial"] == 102
+
+
+def test_primer_arranque_no_abre_techo(tmp_path, isapi):
+    isapi(reciente=[item(500)])
+    seg = seguimiento(tmp_path, cursor=None, mac=None)
+    recuperador(seg, lambda r: None).correr()
+    assert seg.techo is None
+    _entregar_en_vivo(seg, [501])
+    assert seg.cursor == 501

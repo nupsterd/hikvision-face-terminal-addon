@@ -29,6 +29,7 @@ import logging
 import os
 import threading
 import uuid
+import xml.etree.ElementTree as ET
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -87,6 +88,30 @@ def normalizar_mac(valor: Any) -> Optional[str]:
     if len(partes) != 6 or not all(len(p) == 2 and all(c in "0123456789abcdef" for c in p) for p in partes):
         return None
     return ":".join(partes)
+
+
+def mac_de_device_info(resp: requests.Response) -> Optional[str]:
+    """MAC del cuerpo de ``/ISAPI/System/deviceInfo``: JSON o, si no, XML.
+
+    El DS-K1T344 ignora ``?format=json`` y devuelve XML con namespace
+    (``<DeviceInfo xmlns=...><macAddress>``): se busca el elemento cuyo tag termine en
+    ``macAddress``, sin importar el namespace.
+    """
+    try:
+        datos = resp.json()
+    except ValueError:
+        datos = None
+    if isinstance(datos, dict):
+        info = datos.get("DeviceInfo", datos)
+        return normalizar_mac(info.get("macAddress") if isinstance(info, dict) else None)
+    try:
+        raiz = ET.fromstring(resp.content)
+    except (ET.ParseError, TypeError, ValueError):
+        return None
+    for elem in raiz.iter():
+        if isinstance(elem.tag, str) and elem.tag.endswith("macAddress"):
+            return normalizar_mac(elem.text)
+    return None
 
 
 def serial_de(record: dict) -> Optional[int]:
@@ -185,6 +210,13 @@ class SeguimientoEntregas:
 
     Un fallido sale de la puerta: la próxima recuperación lo vuelve a pedir y lo puede
     encolar. Los records sin serial no pasan por la puerta ni mueven el cursor.
+
+    Techo por conexión: cada corrida de recuperación con cursor abre un techo en el cursor
+    efectivo del momento (``abrir_techo``). Mientras está abierto, las entregas en vivo no
+    suben el cursor por encima de seriales que la recuperación todavía no vio. Se libera
+    solo cuando la corrida se completa (``cerrar_techo``); si se corta por tope sube hasta
+    el mayor serial admitido (``subir_techo``); si falla (sin MAC, 401, error) queda donde
+    estaba. Vive en memoria: tras un reinicio el cursor persistido ya quedó congelado.
     """
 
     def __init__(self, estado: EstadoPersistente, log: logging.Logger, puerta_max: int = PUERTA_MAX):
@@ -198,6 +230,7 @@ class SeguimientoEntregas:
         self._mayor_entregado: Optional[int] = estado.cursor_serial
         self._mac: Optional[str] = estado.terminal_mac
         self._cursor_persistido: Optional[int] = estado.cursor_serial
+        self._techo: Optional[int] = None
 
     # --- lectura -----------------------------------------------------------
 
@@ -211,13 +244,45 @@ class SeguimientoEntregas:
         with self._lock:
             return self._mac
 
+    @property
+    def techo(self) -> Optional[int]:
+        with self._lock:
+            return self._techo
+
     def _cursor_efectivo(self) -> Optional[int]:
         tope = min(self._no_resueltos) - 1 if self._no_resueltos else None
         if self._mayor_entregado is None:
-            return tope
-        if tope is None:
-            return self._mayor_entregado
-        return min(self._mayor_entregado, tope)
+            cursor = tope
+        elif tope is None:
+            cursor = self._mayor_entregado
+        else:
+            cursor = min(self._mayor_entregado, tope)
+        if cursor is not None and self._techo is not None:
+            cursor = min(cursor, self._techo)
+        return cursor
+
+    # --- techo por conexión ------------------------------------------------
+
+    def abrir_techo(self) -> Optional[int]:
+        """Inicio de una corrida con cursor: techo = cursor efectivo actual (lo devuelve)."""
+        with self._lock:
+            self._techo = self._cursor_efectivo()
+            return self._techo
+
+    def subir_techo(self, serial: Optional[int]) -> None:
+        """Corrida cortada por tope: techo = mayor serial admitido (None ⇒ se mantiene)."""
+        if serial is None:
+            return
+        with self._lock:
+            if self._techo is None or serial > self._techo:
+                self._techo = serial
+            self._persistir_si_cambia()
+
+    def cerrar_techo(self) -> None:
+        """Corrida completa: se libera el techo (los admitidos siguen frenando por pendientes)."""
+        with self._lock:
+            self._techo = None
+            self._persistir_si_cambia()
 
     # --- puerta ------------------------------------------------------------
 
@@ -288,6 +353,7 @@ class SeguimientoEntregas:
                 self._no_resueltos.clear()
                 self._vistos.clear()
                 self._orden.clear()
+                self._techo = None  # el techo era de la numeración anterior
                 cambio = True
             if cambio:
                 self._persistir(forzar=True)
@@ -439,16 +505,9 @@ class Recuperador:
         mac = self.seguimiento.mac
         if mac is not None:
             return mac
-        resp = self._http("GET", "/ISAPI/System/deviceInfo?format=json")
-        mac = None
-        if resp.status_code == 200:
-            try:
-                datos = resp.json()
-            except ValueError:
-                datos = None
-            if isinstance(datos, dict):
-                info = datos.get("DeviceInfo", datos)
-                mac = normalizar_mac(info.get("macAddress") if isinstance(info, dict) else None)
+        # Sin ?format=json: el DS-K1T344 lo ignora y responde XML igual.
+        resp = self._http("GET", "/ISAPI/System/deviceInfo")
+        mac = mac_de_device_info(resp) if resp.status_code == 200 else None
         if mac is None:
             self.log.warning(
                 "Sin MAC del terminal (deviceInfo HTTP %s): no se recupera en esta conexión.",
@@ -563,12 +622,17 @@ class Recuperador:
     # --- corrida -----------------------------------------------------------
 
     def correr(self) -> dict:
-        """Una corrida completa (sincrónica; ``lanzar`` la pone en un hilo)."""
-        cursor = self.seguimiento.cursor
+        """Una corrida completa (sincrónica; ``lanzar`` la pone en un hilo).
+
+        Con cursor abre el techo por conexión: solo una corrida completa lo libera; una
+        cortada por tope lo sube al mayor serial admitido; una fallida lo deja donde estaba.
+        """
         resumen: dict[str, Any] = {"desde": None, "encolados": 0, "ya_vistos": 0, "paginas": 0,
-                                   "descartados": 0, "cursor_final": cursor}
+                                   "descartados": 0, "cursor_final": self.seguimiento.cursor}
         if self.seguimiento.sin_cursor:
             return self._inicializar(resumen)
+        cursor = self.seguimiento.abrir_techo()
+        resumen["cursor_final"] = cursor
         if cursor is None:  # imposible con sin_cursor False; defensivo
             return resumen
         desde = cursor + 1
@@ -611,6 +675,7 @@ class Recuperador:
         # encima del tope nunca se encolaron y quedan para la próxima corrida.
         self.seguimiento.abandonar(viejos)
 
+        mayor_admitido: Optional[int] = None
         for item in recientes:
             record = self.construir_record(reconstruir_evento(item, self.host, mac))
             if record is None:
@@ -621,6 +686,12 @@ class Recuperador:
                 continue
             self.destino(record)
             resumen["encolados"] += 1
+            mayor_admitido = serial_de(record)
+
+        if sobrantes or cortado:
+            self.seguimiento.subir_techo(mayor_admitido)
+        else:
+            self.seguimiento.cerrar_techo()
 
         resumen["cursor_final"] = self.seguimiento.cursor
         self.log.info(
