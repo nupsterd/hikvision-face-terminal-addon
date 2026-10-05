@@ -392,9 +392,16 @@ class SeguimientoEntregas:
 
     def inicializar(self, serial: int) -> bool:
         """Primer arranque: fija el cursor en el serial más reciente del terminal SIN recuperar
-        nada. No pisa un cursor que ya se fijó con una entrega en vivo."""
+        nada. No pisa un cursor que ya se fijó con una entrega en vivo.
+
+        En la misma operación SIEMPRE abre el techo en ``serial`` (``min`` si ya hay uno), aun
+        si el cursor ya estaba fijado: una 2xx en vivo de una conexión nueva no puede pasar por
+        encima de lo ocurrido después de la consulta. La corrida completa siguiente recupera
+        desde ``serial + 1`` y lo libera. True si fijó el cursor."""
         with self._lock:
+            self._techo = serial if self._techo is None else min(self._techo, serial)
             if self._mayor_entregado is not None:
+                self._persistir_si_cambia()
                 return False
             self._mayor_entregado = serial
             self._persistir(forzar=True)

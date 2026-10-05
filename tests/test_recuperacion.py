@@ -749,7 +749,8 @@ def _entregar_en_vivo(seg: SeguimientoEntregas, seriales) -> None:
 
 def _desde(fake: FakeISAPI) -> list[int]:
     return [c[2]["AcsEventCond"]["beginSerialNo"] for c in fake.acs()
-            if c[2]["AcsEventCond"]["searchResultPosition"] == 0]
+            if "beginSerialNo" in c[2]["AcsEventCond"]  # no la inicialización (por tiempo)
+            and c[2]["AcsEventCond"]["searchResultPosition"] == 0]
 
 
 def conexion(r: Recuperador) -> dict:
@@ -879,13 +880,14 @@ def test_corrida_completa_sin_items_libera_y_el_cursor_sigue_al_vivo(tmp_path, i
     assert leer_estado(tmp_path)["cursor_serial"] == 102
 
 
-def test_primer_arranque_no_abre_techo(tmp_path, isapi):
+def test_primer_arranque_inicializar_abre_techo_en_el_serial(tmp_path, isapi):
+    # Sexta corrección: inicializar() abre el techo en el serial (antes quedaba en None).
     isapi(reciente=[item(500)])
     seg = seguimiento(tmp_path, cursor=None, mac=None)
     recuperador(seg, lambda r: None).correr()
-    assert seg.techo is None
+    assert seg.techo == 500
     _entregar_en_vivo(seg, [501])
-    assert seg.cursor == 501
+    assert seg.cursor == 500  # hasta que una corrida completa lo libere
 
 
 # ---------------------------------------------------------------------------
@@ -1260,6 +1262,105 @@ def test_primer_arranque_lanzar_no_abre_techo(tmp_path, isapi):
     r = recuperador(seg, lambda x: None)
     compuerta = Compuerta(r)
     r.lanzar()
-    assert seg.techo is None
+    assert seg.techo is None  # sin cursor, lanzar() no abre
     compuerta.terminar()
-    assert seg.cursor == 500 and seg.techo is None
+    # Sexta corrección: la inicialización sí lo abre en el serial (antes quedaba en None).
+    assert seg.cursor == 500 and seg.techo == 500
+
+
+# ---------------------------------------------------------------------------
+# (ff)-(hh) inicializar() abre el techo en el serial de inicialización
+# ---------------------------------------------------------------------------
+
+def _retener_inicializacion(monkeypatch, fake: FakeISAPI):
+    """Retiene la consulta por tiempo (inicialización) hasta ``seguir``."""
+    en_consulta, seguir = threading.Event(), threading.Event()
+
+    def retenida(metodo, url, json=None, **kwargs):  # noqa: A002
+        if json and json["AcsEventCond"].get("timeReverseOrder"):
+            en_consulta.set()
+            assert seguir.wait(5)
+        return fake(metodo, url, json=json, **kwargs)
+
+    monkeypatch.setattr(rec.requests, "request", retenida)
+    return en_consulta, seguir
+
+
+def test_reconexion_durante_la_inicializacion_la_relanzada_recupera_el_hueco(tmp_path, isapi, monkeypatch):
+    fake = isapi(reciente=[item(500)], paginas=[("OK", [item(s) for s in range(501, 506)])])
+    en_consulta, seguir = _retener_inicializacion(monkeypatch, fake)
+    seg = seguimiento(tmp_path, cursor=None, mac=None)
+    enviados: list[dict] = []
+    r = recuperador(seg, enviados.append)
+    original = r.correr
+    techos: list = []
+
+    def correr():
+        if techos:  # la relanzada: una 2xx en vivo de la conexión nueva le gana a la lectura
+            _entregar_en_vivo(seg, [505])
+        techos.append(seg.techo)
+        return original()
+
+    r.correr = correr
+    assert r.lanzar() is True
+    assert en_consulta.wait(5)
+    assert r.lanzar() is False  # reconexión durante la inicialización: sin cursor, no abre
+    assert seg.techo is None
+    seguir.set()
+    r._hilo.join(timeout=5)
+    assert not r._hilo.is_alive()
+    assert techos == [None, 500]  # inicializar abrió el techo en el serial
+    assert _desde(fake) == [501]
+    assert [x["serial"] for x in enviados] == [501, 502, 503, 504]  # 505: ya visto
+    assert seg.techo is None  # la relanzada, completa, lo libera
+    assert seg.cursor == 500
+    for x in enviados:
+        seg.entregado(x)
+    assert seg.cursor == 505
+
+
+def test_primer_arranque_normal_la_proxima_conexion_libera_y_sigue_al_vivo(tmp_path, isapi):
+    fake = isapi(reciente=[item(500)])
+    seg = seguimiento(tmp_path, cursor=None, mac=None)
+    r = recuperador(seg, lambda x: None)
+    resumen = conexion(r)
+    assert resumen["encolados"] == 0
+    assert seg.techo == 500
+    _entregar_en_vivo(seg, [501, 502, 503])
+    assert seg.cursor == 500
+    assert leer_estado(tmp_path)["cursor_serial"] == 500
+
+    fake.paginas = [("OK", [item(s) for s in range(501, 504)])]  # nada nuevo: todo ya visto
+    resumen = conexion(r)
+    assert _desde(fake) == [501]
+    assert resumen["encolados"] == 0 and resumen["ya_vistos"] == 3
+    assert seg.techo is None
+    assert seg.cursor == 503
+    _entregar_en_vivo(seg, [504])
+    assert seg.cursor == 504
+
+
+def test_entrega_en_vivo_antes_de_terminar_la_inicializacion_igual_abre_el_techo(tmp_path, isapi, monkeypatch):
+    fake = isapi(reciente=[item(500)])
+    en_consulta, seguir = _retener_inicializacion(monkeypatch, fake)
+    seg = seguimiento(tmp_path, cursor=None, mac=None)
+    enviados: list[dict] = []
+    r = recuperador(seg, enviados.append)
+    assert r.lanzar() is True
+    assert en_consulta.wait(5)
+    _entregar_en_vivo(seg, [505])  # fija el cursor antes de que inicializar termine
+    assert seg.cursor == 505
+    seguir.set()
+    r._hilo.join(timeout=5)
+    assert seg.techo == 500  # inicializar no pisó el cursor pero abrió el techo
+    assert seg.cursor == 500
+    assert leer_estado(tmp_path)["cursor_serial"] == 500
+
+    fake.paginas = [("OK", [item(s) for s in range(501, 506)])]
+    conexion(r)
+    assert _desde(fake) == [501]
+    assert [x["serial"] for x in enviados] == [501, 502, 503, 504]
+    assert seg.techo is None
+    for x in enviados:
+        seg.entregado(x)
+    assert seg.cursor == 505

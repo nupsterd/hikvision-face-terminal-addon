@@ -61,6 +61,18 @@ versionado siguiendo [SemVer](https://semver.org/lang/es/).
 - `lanzar()` con una corrida en curso ya no pierde la conexión nueva: marca "relanzar"
   (log INFO); la corrida en curso no libera el techo y al terminar se corre otra en el mismo
   hilo, repitiendo mientras se vuelva a marcar.
+- Primer arranque: `inicializar(serial)` abre siempre el techo en el serial de
+  inicialización (`min` si ya había uno), en la misma operación que fija el cursor y aun si
+  una entrega en vivo ya lo había fijado (sin tocar ese cursor). Antes, una reconexión
+  durante la inicialización dejaba la corrida relanzada sin techo y una 2xx en vivo podía
+  saltar el hueco. La corrida completa siguiente recupera desde `serial + 1` (lo entregado
+  en vivo sale como ya visto) y lo libera.
+
+### Límite de diseño
+- En el primer arranque (sin `/config/face_state.json`), un hueco anterior a la primera
+  entrega o a la inicialización exitosa no se recupera: no hay punto de partida (la primera
+  instalación no recupera historia). Si la consulta de inicialización falla, se loguea un
+  WARNING y el cursor se fija con la primera entrega; desde ahí rige el techo por conexión.
 
 ### Changed
 - `BackendForwarder._post_with_retries` devuelve `True` (2xx) / `False` (4xx) para informar
