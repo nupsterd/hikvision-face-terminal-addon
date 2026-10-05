@@ -22,6 +22,9 @@ Adaptaciones puntuales del firmware V4.31 documentadas en §5.9.426-451:
   - HTTPS + cert self-signed (§5.9.427)
   - Filter currentEvent=true en el parser (§5.9.443)
   - Shape del payload §5.9.444 (cardType/FaceRect/mask/userType/...)
+
+v1.1.0-alpha (#54): recuperación de lo perdido por ISAPI AcsEvent tras cada conexión
+(módulo `recuperacion.py`), con cursor persistente y puerta única por serial.
 """
 
 from __future__ import annotations
@@ -42,6 +45,13 @@ from typing import Optional
 
 import requests
 from requests.auth import HTTPDigestAuth
+
+from hikvision_face_terminal.recuperacion import (
+    STATE_PATH_DEFAULT,
+    EstadoPersistente,
+    Recuperador,
+    SeguimientoEntregas,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +84,9 @@ class Config:
     # Timeout del POST síncrono al webhook HA post-auth OK (side-effect
     # defensivo). Default 3s; rango 1-30s (schema config.yaml).
     ha_webhook_timeout_seconds: int = 3
+    # Estado persistente de la recuperación por AcsEvent (#54): cursor por serialNo + MAC del
+    # terminal. No es una opción del add-on: vive en /config (addon_config:rw).
+    state_path: Path = STATE_PATH_DEFAULT
 
     @classmethod
     def from_options_json(cls, path: str = "/data/options.json") -> "Config":
@@ -257,11 +270,14 @@ class AuditLogger:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = path.open("a", encoding="utf-8")
+        # #54: escriben el stream y el hilo de recuperación; una línea por write, sin mezclar.
+        self._lock = threading.Lock()
 
     def write(self, record: dict) -> None:
         try:
-            self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-            self._fh.flush()
+            with self._lock:
+                self._fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                self._fh.flush()
         except OSError as exc:
             # Nunca bloqueamos el fan-out al backend (camino crítico M2);
             # reportamos a stderr y seguimos.
@@ -308,6 +324,15 @@ def build_audit_record(event: dict) -> dict:
         "device_kind": "face_terminal",
         "raw": event.get("raw"),
     }
+
+
+def record_desde_evento(evento: dict, log: logging.Logger) -> Optional[dict]:
+    """Evento con la forma del alertStream ⇒ record del audit, por el MISMO camino del
+    stream (``parse_event_block`` + ``build_audit_record``). Lo usa la recuperación por
+    AcsEvent (#54) para que un evento recuperado tenga exactamente la forma de uno en vivo."""
+    body = json.dumps(evento, ensure_ascii=False).encode("utf-8")
+    parsed = parse_event_block(body, log)
+    return build_audit_record(parsed) if parsed is not None else None
 
 
 def migrate_legacy_audit(legacy: Path, new: Path, log: logging.Logger) -> None:
@@ -371,6 +396,9 @@ class BackendForwarder:
         )
         self._thread: Optional[threading.Thread] = None
         self._dropped_count = 0
+        # #54: si está, recibe el resultado de cada record (entregado / fallido) para la
+        # puerta por serial y el cursor de la recuperación. None = comportamiento previo.
+        self.seguimiento: Optional[SeguimientoEntregas] = None
 
     def start(self) -> None:
         if not self.enabled:
@@ -400,6 +428,8 @@ class BackendForwarder:
             self._queue.put_nowait(record)
         except queue.Full:
             self._dropped_count += 1
+            if self.seguimiento is not None:
+                self.seguimiento.fallido(record)
             # Logueamos el primer drop y luego 1 de cada 50, con el total.
             if self._dropped_count % 50 == 1:
                 self.log.warning(
@@ -419,8 +449,15 @@ class BackendForwarder:
             try:
                 if record is self._SENTINEL:
                     break
-                self._post_with_retries(record)
+                entregado = self._post_with_retries(record)
+                if self.seguimiento is not None:
+                    if entregado:
+                        self.seguimiento.entregado(record)
+                    else:
+                        self.seguimiento.fallido(record)
             except Exception as exc:
+                if self.seguimiento is not None and isinstance(record, dict):
+                    self.seguimiento.fallido(record)
                 self.log.error(
                     "Fan-out falló para record (kind=%s major=%s sub=%s): %s",
                     record.get("kind") if isinstance(record, dict) else "?",
@@ -431,7 +468,8 @@ class BackendForwarder:
             finally:
                 self._queue.task_done()
 
-    def _post_with_retries(self, record: dict) -> None:
+    def _post_with_retries(self, record: dict) -> bool:
+        """True con 2xx, False con 4xx (no reintentable). Agota 3 intentos ⇒ levanta."""
         url = self.cfg.backend_url
         token = self.cfg.backend_secret
         timeout = self.cfg.backend_timeout_seconds
@@ -446,7 +484,7 @@ class BackendForwarder:
                     url, json=record, headers=headers, timeout=timeout
                 )
                 if 200 <= resp.status_code < 300:
-                    return  # éxito
+                    return True  # éxito
                 if 400 <= resp.status_code < 500:
                     # error de cliente: no reintentable (token malo, payload, etc.)
                     self.log.warning(
@@ -454,7 +492,7 @@ class BackendForwarder:
                         resp.status_code,
                         resp.text[:200],
                     )
-                    return
+                    return False
                 # 5xx -> reintentable
                 last_exc = RuntimeError(f"HTTP {resp.status_code}")
                 self.log.warning(
@@ -606,6 +644,29 @@ def run(cfg: Config, log: logging.Logger) -> None:
     audit = AuditLogger(cfg.audit_log_path)
     forwarder = BackendForwarder(cfg, log)
     forwarder.start()
+
+    # #54: recuperación por AcsEvent. Solo con el fan-out activo (sin backend no hay a quién
+    # entregar). Puerta por serial + cursor compartidos por stream, recuperación y forwarder.
+    seguimiento: Optional[SeguimientoEntregas] = None
+    recuperador: Optional[Recuperador] = None
+    if forwarder.enabled:
+        seguimiento = SeguimientoEntregas(EstadoPersistente(cfg.state_path, log), log)
+        forwarder.seguimiento = seguimiento
+
+        def _destino_recuperado(record: dict) -> None:
+            # Solo audit + backend. NUNCA _maybe_emit_ha_webhook ni forward_to_ha.
+            audit.write(record)
+            forwarder.enqueue(record)
+
+        recuperador = Recuperador(
+            terminal_host=cfg.terminal_host,
+            terminal_user=cfg.terminal_user,
+            terminal_password=cfg.terminal_password,
+            seguimiento=seguimiento,
+            construir_record=lambda evento: record_desde_evento(evento, log),
+            destino=_destino_recuperado,
+            log=log,
+        )
     # §5.9.427/D8: el DS-K1T344 V4.31 solo expone ISAPI sobre HTTPS puerto 443
     # (a diferencia del DS-K2624X que expone HTTP 80).
     url = f"https://{cfg.terminal_host}/ISAPI/Event/notification/alertStream"
@@ -637,6 +698,10 @@ def run(cfg: Config, log: logging.Logger) -> None:
             )
             response.raise_for_status()
             log.info("Conectado. Escuchando eventos.")
+            # #54: tras CADA conexión exitosa (incluido el arranque), recuperar lo perdido en
+            # un hilo aparte; el stream no espera.
+            if recuperador is not None:
+                recuperador.lanzar()
 
             last_data_at = time.monotonic()
 
@@ -677,7 +742,17 @@ def run(cfg: Config, log: logging.Logger) -> None:
                     record = build_audit_record(event)
                     audit.write(record)
                     # Fan-out al backend (canal primario M2; no-op si deshabilitado).
-                    forwarder.enqueue(record)
+                    # #54: puerta por serial — un serial que ya entró a la cola (p. ej. por
+                    # la recuperación) no se vuelve a encolar. El webhook HA de abajo sí
+                    # corre: este evento llegó en vivo.
+                    if seguimiento is None:
+                        forwarder.enqueue(record)
+                    else:
+                        seguimiento.observar_vivo(record)
+                        if seguimiento.admitir(record):
+                            forwarder.enqueue(record)
+                        else:
+                            log.debug("Serial %s ya encolado: no se repite.", record.get("serial"))
                     # Emit HTTP POST al webhook HA post-auth OK (§5.9.507). Side-
                     # effect defensivo tras el fan-out backend; discrimina adentro.
                     _maybe_emit_ha_webhook(

@@ -3,6 +3,34 @@
 Formato basado en [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versionado siguiendo [SemVer](https://semver.org/lang/es/).
 
+## v1.1.0-alpha (sin publicar)
+
+### Added
+- **Recuperación de eventos perdidos por ISAPI AcsEvent (#54, B6.2).** Después de cada
+  conexión exitosa del stream (incluido el arranque), un hilo aparte pide al terminal
+  `POST /ISAPI/AccessControl/AcsEvent?format=json` todo lo posterior al cursor
+  (`beginSerialNo = cursor + 1`, `maxResults` 30, paginando mientras `MORE`), lo reordena
+  por `serialNo` (AcsEvent ordena por hora), lo reconstruye con la forma del alertStream
+  (`dateTime` = `time` tal cual) y lo pasa por el mismo parser y el mismo
+  `build_audit_record` con `recuperado: true`. Va al audit y al backend; **nunca** al
+  webhook de HA. Requiere pv-backend con el PR #74 (pre-chequeo de duplicados).
+- Estado persistente `/config/face_state.json` (`cursor_serial`, `terminal_mac`,
+  `updated_at`), escritura atómica y lectura tolerante. Cursor = mayor serial entregado con
+  2xx sin ningún serial pendiente o fallido por debajo (3 intentos agotados, 4xx o cola
+  llena lo frenan hasta que una recuperación lo entregue).
+- Puerta única por serial antes de la cola (últimos 10 000): cada serial sale como máximo
+  una vez por proceso, por stream o por recuperación.
+- Primer arranque sin estado: el cursor se inicializa con el serial más reciente del
+  terminal (`timeReverseOrder`, últimos 7 días) sin recuperar historia.
+- `major=0` (todos) con caída a `major=5` si el equipo lo rechaza; reset de fábrica
+  (serial en vivo < cursor − 1000) reinicia el cursor; tope por corrida de 1000 eventos y
+  7 días; un 401 suspende la recuperación de esa conexión sin reintentar (§5.9.574); sin
+  MAC del terminal no se recupera. Ninguna opción nueva.
+
+### Changed
+- `BackendForwarder._post_with_retries` devuelve `True` (2xx) / `False` (4xx) para informar
+  el resultado al cursor. `AuditLogger.write` con lock (escriben dos hilos).
+
 ## v1.0.1-alpha (2026-07-18)
 
 ### 2026-07-18 hotfix1
