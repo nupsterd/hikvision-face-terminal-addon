@@ -752,10 +752,16 @@ def _desde(fake: FakeISAPI) -> list[int]:
             if c[2]["AcsEventCond"]["searchResultPosition"] == 0]
 
 
+def conexion(r: Recuperador) -> dict:
+    """Lo que hace ``lanzar`` por cada conexión del stream, sin hilo: abrir el techo y correr."""
+    r.seguimiento.abrir_techo()
+    return r.correr()
+
+
 def test_sin_mac_el_cursor_no_pasa_el_techo_y_la_corrida_siguiente_libera(tmp_path, isapi):
     fake = isapi(mac=None, info_xml=True)
     seg = seguimiento(tmp_path, cursor=100, mac=None)
-    recuperador(seg, lambda r: None).correr()
+    conexion(recuperador(seg, lambda r: None))
     assert seg.techo == 100
     _entregar_en_vivo(seg, [105, 106, 107])  # 101..104 nunca vistos
     assert seg.cursor == 100
@@ -764,7 +770,7 @@ def test_sin_mac_el_cursor_no_pasa_el_techo_y_la_corrida_siguiente_libera(tmp_pa
     fake.mac = MAC
     fake.paginas = [("OK", [item(s) for s in range(101, 108)])]
     enviados: list[dict] = []
-    resumen = recuperador(seg, enviados.append).correr()
+    resumen = conexion(recuperador(seg, enviados.append))
     assert _desde(fake) == [101]
     assert [r["serial"] for r in enviados] == [101, 102, 103, 104]
     assert resumen["ya_vistos"] == 3
@@ -779,7 +785,7 @@ def test_sin_mac_el_cursor_no_pasa_el_techo_y_la_corrida_siguiente_libera(tmp_pa
 def test_sin_mac_con_reinicio_retoma_desde_el_cursor_congelado(tmp_path, isapi):
     fake = isapi(mac=None, info_xml=True)
     seg = seguimiento(tmp_path, cursor=100, mac=None)
-    recuperador(seg, lambda r: None).correr()
+    conexion(recuperador(seg, lambda r: None))
     _entregar_en_vivo(seg, [105, 106])
 
     reiniciado = SeguimientoEntregas(EstadoPersistente(tmp_path / "face_state.json", LOG), LOG)
@@ -787,7 +793,7 @@ def test_sin_mac_con_reinicio_retoma_desde_el_cursor_congelado(tmp_path, isapi):
     fake.mac = MAC
     fake.paginas = [("OK", [item(s) for s in range(101, 107)])]
     enviados: list[dict] = []
-    recuperador(reiniciado, enviados.append).correr()
+    conexion(recuperador(reiniciado, enviados.append))
     assert _desde(fake) == [101]
     # Lo entregado en vivo antes del reinicio se re-envía: el backend lo absorbe como duplicado.
     assert [r["serial"] for r in enviados] == [101, 102, 103, 104, 105, 106]
@@ -798,7 +804,7 @@ def test_abortada_el_cursor_no_pasa_el_techo_y_la_corrida_siguiente_libera(tmp_p
     fake = isapi(status_acs=status)
     seg = seguimiento(tmp_path, cursor=100)
     r = recuperador(seg, lambda rec_: None)
-    resumen = r.correr()
+    resumen = conexion(r)
     assert resumen["encolados"] == 0
     assert seg.techo == 100
     _entregar_en_vivo(seg, [104, 105])
@@ -809,7 +815,7 @@ def test_abortada_el_cursor_no_pasa_el_techo_y_la_corrida_siguiente_libera(tmp_p
     fake.paginas = [("OK", [item(s) for s in range(101, 106)])]
     enviados: list[dict] = []
     r.destino = enviados.append
-    r.correr()
+    conexion(r)
     assert _desde(fake)[-1] == 101
     assert [x["serial"] for x in enviados] == [101, 102, 103]
     assert seg.techo is None
@@ -914,7 +920,7 @@ def test_400_end_serial_aborta_sin_fallback_a_major5(tmp_path, isapi, caplog):
     seg = seguimiento(tmp_path, cursor=100)
     r = recuperador(seg, lambda rec_: None)
     with caplog.at_level(logging.WARNING):
-        resumen = r.correr()
+        resumen = conexion(r)
     assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0]
     assert resumen["encolados"] == 0
     assert r._major is None  # no se fijó major=5
@@ -1110,3 +1116,150 @@ def test_abandonado_no_pasa_el_techo(tmp_path):
     assert seg.cursor == 100
     seg.cerrar_techo()
     assert seg.cursor == 150
+
+
+# ---------------------------------------------------------------------------
+# (aa)-(ee) techo abierto en lanzar() y relanzamiento por conexión nueva
+# ---------------------------------------------------------------------------
+
+class Compuerta:
+    """Reemplaza ``r.correr``: registra cada corrida y retiene la primera hasta ``liberar``."""
+
+    def __init__(self, r: Recuperador):
+        self.r = r
+        self.original = r.correr
+        self.llamadas = 0
+        self.techos: list = []
+        self.adentro = threading.Event()
+        self.liberar = threading.Event()
+        r.correr = self
+
+    def __call__(self):
+        self.llamadas += 1
+        self.techos.append(self.r.seguimiento.techo)
+        if self.llamadas == 1:
+            self.adentro.set()
+            assert self.liberar.wait(5)
+        return self.original()
+
+    def terminar(self) -> None:
+        self.liberar.set()
+        self.r._hilo.join(timeout=5)
+        assert not self.r._hilo.is_alive()
+
+
+def test_entrega_en_vivo_antes_del_hilo_no_pasa_el_techo(tmp_path, isapi):
+    isapi(paginas=[("OK", [item(s) for s in range(101, 105)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    enviados: list[dict] = []
+    r = recuperador(seg, enviados.append)
+    compuerta = Compuerta(r)
+    assert r.lanzar() is True
+    assert compuerta.adentro.wait(5)
+    _entregar_en_vivo(seg, [104])  # 2xx en vivo antes de que la corrida empiece
+    assert seg.techo == 100
+    assert seg.cursor == 100
+    assert leer_estado(tmp_path)["cursor_serial"] == 100
+    compuerta.terminar()
+    assert [x["serial"] for x in enviados] == [101, 102, 103]
+    assert seg.techo is None
+    for x in enviados:
+        seg.entregado(x)
+    assert seg.cursor == 104
+
+
+def test_conexion_nueva_durante_la_corrida_relanza_sin_liberar_el_techo(tmp_path, isapi):
+    fake = isapi(paginas=[("OK", [item(s) for s in range(101, 104)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    enviados: list[dict] = []
+    en_destino = threading.Event()
+    seguir = threading.Event()
+
+    def destino(record):
+        enviados.append(record)
+        if len(enviados) == 1:  # la primera corrida ya consultó: se queda a mitad de camino
+            en_destino.set()
+            assert seguir.wait(5)
+
+    r = recuperador(seg, destino)
+    techos: list = []
+    original = r.correr
+
+    def correr_registrando():
+        techos.append(seg.techo)
+        return original()
+
+    r.correr = correr_registrando
+    assert r.lanzar() is True
+    assert en_destino.wait(5)
+    # Desconexión y reconexión durante la corrida: 104..106 pasaron en el hueco nuevo.
+    fake.paginas = [("OK", [item(s) for s in range(101, 108)])]
+    assert r.lanzar() is False
+    _entregar_en_vivo(seg, [107])  # en vivo de la conexión nueva
+    assert seg.cursor == 100
+    seguir.set()
+    r._hilo.join(timeout=5)
+    assert not r._hilo.is_alive()
+    assert techos == [100, 100]  # la segunda arrancó con el techo todavía abierto
+    assert _desde(fake) == [101, 101]
+    assert [x["serial"] for x in enviados] == [101, 102, 103, 104, 105, 106]
+    assert seg.techo is None  # recién la segunda, completa, lo libera
+    for x in enviados:
+        seg.entregado(x)
+    assert seg.cursor == 107
+
+
+def test_abrir_techo_nunca_sube_un_techo_abierto(tmp_path):
+    seg = seguimiento(tmp_path, cursor=100)
+    assert seg.abrir_techo() == 100
+    _entregar_en_vivo(seg, [101, 102, 103])
+    assert seg.abrir_techo() == 100  # el cursor efectivo de 103 no lo sube
+    assert seg.cursor == 100
+    seg.subir_techo(200)  # corrida cortada
+    assert seg.cursor == 103
+    assert seg.abrir_techo() == 103  # min(200, 103): baja
+    _entregar_en_vivo(seg, [150])
+    assert seg.cursor == 103
+
+
+def test_varios_lanzar_durante_la_corrida_una_sola_extra(tmp_path, isapi, caplog):
+    isapi(paginas=[])
+    seg = seguimiento(tmp_path, cursor=100)
+    r = recuperador(seg, lambda x: None)
+    compuerta = Compuerta(r)
+    with caplog.at_level(logging.INFO, logger=LOG.name):
+        assert r.lanzar() is True
+        assert compuerta.adentro.wait(5)
+        assert [r.lanzar() for _ in range(3)] == [False, False, False]
+        compuerta.terminar()
+    assert compuerta.llamadas == 2
+    assert caplog.text.count("se relanza al terminar") == 3
+    assert seg.techo is None
+    assert r.lanzar() is True  # terminado: una conexión nueva vuelve a arrancar un hilo
+    r._hilo.join(timeout=5)
+    assert compuerta.llamadas == 3
+
+
+def test_reinicio_el_primer_lanzar_abre_el_techo_antes_de_cualquier_entrega(tmp_path, isapi):
+    isapi(paginas=[("OK", [item(s) for s in range(101, 106)])])
+    seguimiento(tmp_path, cursor=100)  # estado persistido por el proceso anterior
+    seg = SeguimientoEntregas(EstadoPersistente(tmp_path / "face_state.json", LOG), LOG)
+    assert seg.techo is None
+    r = recuperador(seg, lambda x: None)
+    compuerta = Compuerta(r)
+    r.lanzar()
+    assert seg.techo == 100  # sincrónico, antes de que el hilo corra
+    _entregar_en_vivo(seg, [105])
+    assert seg.cursor == 100
+    compuerta.terminar()
+
+
+def test_primer_arranque_lanzar_no_abre_techo(tmp_path, isapi):
+    isapi(reciente=[item(500)])
+    seg = seguimiento(tmp_path, cursor=None, mac=None)
+    r = recuperador(seg, lambda x: None)
+    compuerta = Compuerta(r)
+    r.lanzar()
+    assert seg.techo is None
+    compuerta.terminar()
+    assert seg.cursor == 500 and seg.techo is None

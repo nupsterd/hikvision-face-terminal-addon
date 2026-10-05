@@ -222,8 +222,9 @@ class SeguimientoEntregas:
     abandonado por antigüedad o sin record (``resolver_sin_envio``). Los sobrantes por tope
     no se resuelven: quedan para la próxima corrida.
 
-    Techo por conexión: cada corrida de recuperación con cursor abre un techo en el cursor
-    efectivo del momento (``abrir_techo``). Mientras está abierto, las entregas en vivo no
+    Techo por conexión: cada conexión del stream con cursor abre un techo en el cursor
+    efectivo del momento (``abrir_techo``, desde ``Recuperador.lanzar`` en el hilo del stream,
+    antes de leer eventos). Mientras está abierto, las entregas en vivo no
     suben el cursor por encima de seriales que la recuperación todavía no vio. Se libera
     solo cuando la corrida se completa (``cerrar_techo``); si se corta por tope sube hasta
     el mayor serial procesado (``subir_techo``); si falla (sin MAC, 401, error) queda donde
@@ -275,9 +276,14 @@ class SeguimientoEntregas:
     # --- techo por conexión ------------------------------------------------
 
     def abrir_techo(self) -> Optional[int]:
-        """Inicio de una corrida con cursor: techo = cursor efectivo actual (lo devuelve)."""
+        """Conexión nueva del stream: techo = min(techo abierto, cursor efectivo). Nunca sube
+        un techo ya abierto. Sin cursor (primer arranque) no abre nada. Devuelve el techo."""
         with self._lock:
-            self._techo = self._cursor_efectivo()
+            if self._mayor_entregado is None:
+                return self._techo
+            cursor = self._cursor_efectivo()  # ya acotado por el techo abierto, si lo hay
+            if cursor is not None:
+                self._techo = cursor if self._techo is None else min(self._techo, cursor)
             return self._techo
 
     def subir_techo(self, serial: Optional[int]) -> None:
@@ -477,25 +483,41 @@ class Recuperador:
         self.ahora = ahora
         self._hilo: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._en_curso = False  # hay un hilo de recuperación vivo (bajo _lock)
+        self._relanzar = False  # hubo una conexión nueva durante la corrida (bajo _lock)
         self._major: Optional[int] = None  # None = todavía no se probó major=0
 
     # --- disparo -----------------------------------------------------------
 
     def lanzar(self) -> bool:
-        """Arranca una corrida en un hilo daemon. False si ya hay una en curso."""
+        """Conexión nueva del stream. Se llama en el hilo del stream ANTES de leer eventos:
+        abre el techo ahí mismo (sincrónico), así ninguna entrega en vivo de esta conexión
+        pasa por encima del hueco de la desconexión. Después arranca la corrida en un hilo
+        daemon; si ya hay una en curso, la marca para relanzar al terminar y devuelve False."""
         with self._lock:
-            if self._hilo is not None and self._hilo.is_alive():
-                self.log.info("Recuperación anterior todavía en curso: no se lanza otra.")
+            self.seguimiento.abrir_techo()
+            if self._en_curso:
+                self._relanzar = True
+                self.log.info("Recuperación en curso: se relanza al terminar (conexión nueva).")
                 return False
+            self._en_curso = True
             self._hilo = threading.Thread(target=self._correr_seguro, name="recuperacion", daemon=True)
             self._hilo.start()
             return True
 
     def _correr_seguro(self) -> None:
-        try:
-            self.correr()
-        except Exception as exc:  # nunca tumbar el proceso
-            self.log.error("Recuperación falló: %s", exc)
+        """Corre y repite mientras haya habido una conexión nueva durante la corrida."""
+        while True:
+            try:
+                self.correr()
+            except Exception as exc:  # nunca tumbar el proceso
+                self.log.error("Recuperación falló: %s", exc)
+            with self._lock:
+                if not self._relanzar:
+                    self._en_curso = False
+                    return
+                self._relanzar = False
+            self.log.info("Relanzando la recuperación por una conexión nueva durante la corrida.")
 
     # --- HTTP --------------------------------------------------------------
 
@@ -658,18 +680,18 @@ class Recuperador:
     # --- corrida -----------------------------------------------------------
 
     def correr(self) -> dict:
-        """Una corrida completa (sincrónica; ``lanzar`` la pone en un hilo).
+        """Una corrida (sincrónica; ``lanzar`` abre el techo y la pone en un hilo).
 
-        Con cursor abre el techo por conexión: solo una corrida completa lo libera; una
-        cortada por tope lo sube al mayor serial procesado (admitido, ya visto, sin record o
-        abandonado por antigüedad), nunca por encima de un sobrante; una fallida lo deja donde
-        estaba.
+        Arranca en el cursor efectivo + 1. Solo una corrida completa libera el techo, y no
+        si hubo una conexión nueva durante ella (se relanza); una cortada por tope lo sube al
+        mayor serial procesado (admitido, ya visto, sin record o abandonado por antigüedad),
+        nunca por encima de un sobrante; una fallida lo deja donde estaba.
         """
         resumen: dict[str, Any] = {"desde": None, "encolados": 0, "ya_vistos": 0, "paginas": 0,
                                    "descartados": 0, "cursor_final": self.seguimiento.cursor}
         if self.seguimiento.sin_cursor:
             return self._inicializar(resumen)
-        cursor = self.seguimiento.abrir_techo()
+        cursor = self.seguimiento.cursor
         resumen["cursor_final"] = cursor
         if cursor is None:  # imposible con sin_cursor False; defensivo
             return resumen
@@ -736,7 +758,11 @@ class Recuperador:
         elif cortado:
             self.seguimiento.subir_techo(validos[-1]["serialNo"] if validos else None)
         else:
-            self.seguimiento.cerrar_techo()
+            # Bajo el lock de lanzar: una conexión nueva que llegue ahora o ya llegó deja el
+            # techo abierto para la corrida siguiente.
+            with self._lock:
+                if not self._relanzar:
+                    self.seguimiento.cerrar_techo()
 
         resumen["cursor_final"] = self.seguimiento.cursor
         self.log.info(

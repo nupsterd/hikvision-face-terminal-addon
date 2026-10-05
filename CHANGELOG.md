@@ -54,6 +54,13 @@ versionado siguiendo [SemVer](https://semver.org/lang/es/).
   con todo abandonado). Ahora son estado final igual que un 2xx (`resolver_sin_envio`):
   suben el cursor hasta el mayor de ellos; un pendiente por debajo y el techo lo siguen
   limitando. Los sobrantes por tope no se resuelven.
+- El techo se abre en `Recuperador.lanzar()`, en el hilo del stream y antes de leer
+  eventos de la conexión (antes lo abría el hilo de recuperación: una 2xx en vivo que
+  ganara la carrera saltaba el hueco). `abrir_techo` nunca sube un techo abierto
+  (`min(techo, cursor efectivo)`); sin cursor no abre. `correr()` ya no lo abre.
+- `lanzar()` con una corrida en curso ya no pierde la conexión nueva: marca "relanzar"
+  (log INFO); la corrida en curso no libera el techo y al terminar se corre otra en el mismo
+  hilo, repitiendo mientras se vuelva a marcar.
 
 ### Changed
 - `BackendForwarder._post_with_retries` devuelve `True` (2xx) / `False` (4xx) para informar
