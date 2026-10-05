@@ -45,6 +45,10 @@ versionado siguiendo [SemVer](https://semver.org/lang/es/).
   también da 400). La consulta de inicialización es por tiempo y no cambia.
 - Fallback a `major=5` solo si el 400 trae un `errorMsg` que menciona `major`; cualquier otro
   rechazo aborta la corrida (el techo protege) y el `errorMsg` del equipo se loguea.
+- Corrida cortada sin ningún ítem admitido (todos con más de 7 días, ya vistos o sin
+  record) dejaba el techo igual y la siguiente pedía el mismo rango: cursor congelado. Ahora
+  el techo de una corrida cortada sube a lo procesado: con sobrantes, `min(sobrantes) − 1`;
+  con la paginación cortada y sin sobrantes, el mayor serial obtenido; sin ítems, queda.
 
 ### Changed
 - `BackendForwarder._post_with_retries` devuelve `True` (2xx) / `False` (4xx) para informar

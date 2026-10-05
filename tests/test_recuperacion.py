@@ -938,3 +938,95 @@ def test_400_sin_error_msg_aborta_sin_fallback(tmp_path, isapi):
     seg = seguimiento(tmp_path, cursor=100)
     recuperador(seg, lambda r: None).correr()
     assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0]
+
+
+# ---------------------------------------------------------------------------
+# (v)-(x) corrida cortada sin admitidos: el techo sube a lo procesado
+# ---------------------------------------------------------------------------
+
+def _viejo(serial: int) -> dict:
+    return item(serial, time=(AHORA - timedelta(days=8)).isoformat())
+
+
+def test_paginacion_cortada_todo_viejo_sube_el_techo_y_no_repite_el_rango(tmp_path, isapi):
+    pagina = rec.MAX_RESULTS
+    fake = isapi(paginas=[("MORE", [_viejo(s) for s in range(1 + i * pagina, 1 + (i + 1) * pagina)])
+                          for i in range(36)])
+    seg = seguimiento(tmp_path, cursor=0)
+    resumen = recuperador(seg, lambda r: None).correr()
+    obtenidos = 34 * pagina  # _consultar corta al pasar TOPE_EVENTOS
+    assert resumen["encolados"] == 0 and resumen["descartados"] == obtenidos
+    assert seg.techo == obtenidos
+    # Los abandonados no son entregas: el cursor sube al techo con la primera 2xx en vivo.
+    _entregar_en_vivo(seg, [5000])
+    assert seg.cursor == obtenidos
+    assert leer_estado(tmp_path)["cursor_serial"] == obtenidos
+
+    fake.paginas = [("OK", [_viejo(s) for s in range(obtenidos + 1, obtenidos + 11)])]
+    recuperador(seg, lambda r: None).correr()
+    assert _desde(fake) == [1, obtenidos + 1]  # avanza: no repite el rango
+    assert seg.techo is None
+    assert seg.cursor == 5000
+
+
+def test_tope_con_sobrantes_sin_admitidos_sube_el_techo_al_sobrante_menos_uno(tmp_path, isapi):
+    viejos = [_viejo(s) for s in range(1, 51)]
+    recientes = [item(s) for s in range(51, 1056)]  # 1005: 51..1050 procesados, 1051..1055 sobrantes
+    fake = isapi(paginas=[("OK", viejos + recientes)])
+    seg = seguimiento(tmp_path, cursor=0)
+    en_cola = [{"serial": s} for s in range(51, 1051)]
+    assert all(seg.admitir(r) for r in en_cola)  # todos los recientes procesables ya vistos
+    resumen = recuperador(seg, lambda r: None).correr()
+    assert resumen["encolados"] == 0 and resumen["ya_vistos"] == 1000
+    assert seg.techo == 1050
+    for r in en_cola:
+        seg.entregado(r)
+    _entregar_en_vivo(seg, [1200])
+    assert seg.cursor == 1050
+
+    fake.paginas = [("OK", [item(s) for s in range(1051, 1056)])]
+    enviados: list[dict] = []
+    recuperador(seg, enviados.append).correr()
+    assert _desde(fake) == [1, 1051]
+    assert [r["serial"] for r in enviados] == [1051, 1052, 1053, 1054, 1055]
+    assert seg.techo is None
+
+
+def test_paginacion_cortada_todos_ya_vistos_techo_en_el_mayor_obtenido(tmp_path, isapi, monkeypatch):
+    monkeypatch.setattr(rec, "MAX_PAGINAS", 2)
+    pagina = rec.MAX_RESULTS
+    fake = isapi(paginas=[("MORE", [item(s) for s in range(101 + i * pagina, 101 + (i + 1) * pagina)])
+                          for i in range(3)])
+    seg = seguimiento(tmp_path, cursor=100)
+    ultimo = 100 + 2 * pagina
+    pendientes = [{"serial": s} for s in range(101, ultimo + 1)]
+    assert all(seg.admitir(r) for r in pendientes)  # en vivo, en la cola
+    resumen = recuperador(seg, lambda r: None).correr()
+    assert resumen["encolados"] == 0 and resumen["ya_vistos"] == 2 * pagina
+    assert seg.techo == ultimo
+    assert seg.cursor == 100  # los pendientes siguen frenando
+    for r in pendientes:
+        seg.entregado(r)
+    _entregar_en_vivo(seg, [ultimo + 50])
+    assert seg.cursor == ultimo
+
+    fake.paginas = []
+    recuperador(seg, lambda r: None).correr()
+    assert _desde(fake)[-1] == ultimo + 1
+    assert seg.cursor == ultimo + 50
+
+
+def test_sobrantes_con_mezcla_de_admitidos_y_viejos_techo_en_el_sobrante_menos_uno(tmp_path, isapi):
+    # Un viejo con serial por encima de los sobrantes (hora desordenada) no sube el techo.
+    validos = [_viejo(s) for s in range(1, 11)] + [item(s) for s in range(11, 1016)] + [_viejo(1020)]
+    isapi(paginas=[("OK", validos)])
+    seg = seguimiento(tmp_path, cursor=0)
+    enviados: list[dict] = []
+    resumen = recuperador(seg, enviados.append).correr()
+    assert resumen["encolados"] == 1000
+    assert enviados[-1]["serial"] == 1010
+    assert seg.techo == 1010  # min(sobrantes 1011..1015) − 1
+    for r in enviados:
+        seg.entregado(r)
+    _entregar_en_vivo(seg, [1100])
+    assert seg.cursor == 1010

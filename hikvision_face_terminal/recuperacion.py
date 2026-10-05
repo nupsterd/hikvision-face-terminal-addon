@@ -222,7 +222,7 @@ class SeguimientoEntregas:
     efectivo del momento (``abrir_techo``). Mientras está abierto, las entregas en vivo no
     suben el cursor por encima de seriales que la recuperación todavía no vio. Se libera
     solo cuando la corrida se completa (``cerrar_techo``); si se corta por tope sube hasta
-    el mayor serial admitido (``subir_techo``); si falla (sin MAC, 401, error) queda donde
+    el mayor serial procesado (``subir_techo``); si falla (sin MAC, 401, error) queda donde
     estaba. Vive en memoria: tras un reinicio el cursor persistido ya quedó congelado.
     """
 
@@ -277,7 +277,7 @@ class SeguimientoEntregas:
             return self._techo
 
     def subir_techo(self, serial: Optional[int]) -> None:
-        """Corrida cortada por tope: techo = mayor serial admitido (None ⇒ se mantiene)."""
+        """Corrida cortada por tope: techo = hasta dónde se procesó (None ⇒ se mantiene)."""
         if serial is None:
             return
         with self._lock:
@@ -648,7 +648,9 @@ class Recuperador:
         """Una corrida completa (sincrónica; ``lanzar`` la pone en un hilo).
 
         Con cursor abre el techo por conexión: solo una corrida completa lo libera; una
-        cortada por tope lo sube al mayor serial admitido; una fallida lo deja donde estaba.
+        cortada por tope lo sube al mayor serial procesado (admitido, ya visto, sin record o
+        abandonado por antigüedad), nunca por encima de un sobrante; una fallida lo deja donde
+        estaba.
         """
         resumen: dict[str, Any] = {"desde": None, "encolados": 0, "ya_vistos": 0, "paginas": 0,
                                    "descartados": 0, "cursor_final": self.seguimiento.cursor}
@@ -698,7 +700,6 @@ class Recuperador:
         # encima del tope nunca se encolaron y quedan para la próxima corrida.
         self.seguimiento.abandonar(viejos)
 
-        mayor_admitido: Optional[int] = None
         for item in recientes:
             record = self.construir_record(reconstruir_evento(item, self.host, mac))
             if record is None:
@@ -709,10 +710,13 @@ class Recuperador:
                 continue
             self.destino(record)
             resumen["encolados"] += 1
-            mayor_admitido = serial_de(record)
 
-        if sobrantes or cortado:
-            self.seguimiento.subir_techo(mayor_admitido)
+        # Corrida cortada: el techo sube hasta lo PROCESADO (aunque no se haya admitido nada),
+        # si no la próxima pediría el mismo rango y se cortaría igual (cursor congelado).
+        if sobrantes:
+            self.seguimiento.subir_techo(min(sobrantes) - 1)
+        elif cortado:
+            self.seguimiento.subir_techo(validos[-1]["serialNo"] if validos else None)
         else:
             self.seguimiento.cerrar_techo()
 
