@@ -218,6 +218,10 @@ class SeguimientoEntregas:
     Un fallido sale de la puerta: la próxima recuperación lo vuelve a pedir y lo puede
     encolar. Los records sin serial no pasan por la puerta ni mueven el cursor.
 
+    ``mayor_entregado`` sube con todo serial procesado en estado final: entregado (2xx),
+    abandonado por antigüedad o sin record (``resolver_sin_envio``). Los sobrantes por tope
+    no se resuelven: quedan para la próxima corrida.
+
     Techo por conexión: cada corrida de recuperación con cursor abre un techo en el cursor
     efectivo del momento (``abrir_techo``). Mientras está abierto, las entregas en vivo no
     suben el cursor por encima de seriales que la recuperación todavía no vio. Se libera
@@ -330,14 +334,23 @@ class SeguimientoEntregas:
             self._persistir_si_cambia()
         self.log.warning("Serial %s sin entregar: el cursor no lo pasa hasta recuperarlo.", serial)
 
-    def abandonar(self, serials: list[int]) -> None:
-        """Seriales que la recuperación descartó por tope: dejan de frenar el cursor."""
+    def resolver_sin_envio(self, serials: list[int]) -> None:
+        """Seriales en estado final sin entrega (abandonados por antigüedad o sin record):
+        cuentan como procesados igual que un 2xx. Dejan de frenar el cursor y lo suben hasta
+        el mayor de ellos; un pendiente por debajo y el techo lo siguen limitando."""
         if not serials:
             return
         with self._lock:
             for s in serials:
                 self._no_resueltos.discard(s)
+            mayor = max(serials)
+            if self._mayor_entregado is None or mayor > self._mayor_entregado:
+                self._mayor_entregado = mayor
             self._persistir_si_cambia()
+
+    def abandonar(self, serials: list[int]) -> None:
+        """Seriales que la recuperación descartó por antigüedad (más de 7 días)."""
+        self.resolver_sin_envio(serials)
 
     # --- stream en vivo ----------------------------------------------------
 
@@ -696,13 +709,16 @@ class Recuperador:
                 " (consulta cortada; el resto queda para la próxima conexión)" if cortado else "",
             )
         resumen["descartados"] = len(viejos) + len(sobrantes)
-        # Los más viejos que 7 días se abandonan (dejan de frenar el cursor); los sobrantes por
-        # encima del tope nunca se encolaron y quedan para la próxima corrida.
+        # Los más viejos que 7 días se abandonan (estado final: suben el cursor como una
+        # entrega); los sobrantes por encima del tope nunca se encolaron y quedan para la
+        # próxima corrida.
         self.seguimiento.abandonar(viejos)
 
+        sin_record: list[int] = []
         for item in recientes:
             record = self.construir_record(reconstruir_evento(item, self.host, mac))
             if record is None:
+                sin_record.append(item["serialNo"])
                 continue
             record["recuperado"] = True
             if not self.seguimiento.admitir(record):
@@ -710,6 +726,8 @@ class Recuperador:
                 continue
             self.destino(record)
             resumen["encolados"] += 1
+        # Sin record (el parser lo descarta): estado final, igual que un abandonado.
+        self.seguimiento.resolver_sin_envio(sin_record)
 
         # Corrida cortada: el techo sube hasta lo PROCESADO (aunque no se haya admitido nada),
         # si no la próxima pediría el mismo rango y se cortaría igual (cursor congelado).

@@ -1030,3 +1030,83 @@ def test_sobrantes_con_mezcla_de_admitidos_y_viejos_techo_en_el_sobrante_menos_u
         seg.entregado(r)
     _entregar_en_vivo(seg, [1100])
     assert seg.cursor == 1010
+
+
+# ---------------------------------------------------------------------------
+# (z) abandonados y sin record son estado final: suben el cursor sin entregas en vivo
+# ---------------------------------------------------------------------------
+
+def test_corrida_completa_todo_viejo_sin_vivo_sube_el_cursor(tmp_path, isapi):
+    fake = isapi(paginas=[("OK", [_viejo(s) for s in range(101, 121)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    resumen = recuperador(seg, lambda r: None).correr()
+    assert resumen["encolados"] == 0 and resumen["descartados"] == 20
+    assert seg.techo is None
+    assert seg.cursor == 120
+    assert leer_estado(tmp_path)["cursor_serial"] == 120
+
+    fake.paginas = []
+    recuperador(seg, lambda r: None).correr()
+    assert _desde(fake) == [101, 121]
+
+
+def test_paginacion_cortada_todo_viejo_sin_vivo_no_repite(tmp_path, isapi):
+    pagina = rec.MAX_RESULTS
+    fake = isapi(paginas=[("MORE", [_viejo(s) for s in range(1 + i * pagina, 1 + (i + 1) * pagina)])
+                          for i in range(36)])
+    seg = seguimiento(tmp_path, cursor=0)
+    recuperador(seg, lambda r: None).correr()
+    obtenidos = 34 * pagina
+    assert seg.techo == obtenidos
+    assert seg.cursor == obtenidos  # sin ninguna entrega en vivo
+    assert leer_estado(tmp_path)["cursor_serial"] == obtenidos
+
+    fake.paginas = []
+    recuperador(seg, lambda r: None).correr()
+    assert _desde(fake) == [1, obtenidos + 1]
+
+
+def test_record_none_cuenta_como_resuelto(tmp_path, isapi):
+    fake = isapi(paginas=[("OK", [item(s) for s in range(101, 106)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    r = recuperador(seg, None)
+    enviados: list[dict] = []
+    r.destino = enviados.append
+    r.construir_record = lambda ev: (None if ev["AccessControllerEvent"]["serialNo"] in (102, 105)
+                                     else record_desde_evento(ev, LOG))
+    resumen = r.correr()
+    assert [x["serial"] for x in enviados] == [101, 103, 104]
+    assert resumen["encolados"] == 3
+    assert seg.cursor == 100  # 101 pendiente frena
+    for x in enviados:
+        seg.entregado(x)
+    assert seg.cursor == 105  # 105 sin record: resuelto, sube el cursor
+    assert leer_estado(tmp_path)["cursor_serial"] == 105
+
+    # Solo sin record y sin vivo: igual avanza.
+    fake.paginas = [("OK", [item(106)])]
+    r.construir_record = lambda ev: None
+    r.correr()
+    assert _desde(fake)[-1] == 106
+    assert seg.cursor == 106
+
+
+def test_pendiente_por_debajo_de_un_abandonado_sigue_frenando(tmp_path, isapi):
+    seg = seguimiento(tmp_path, cursor=100)
+    pendiente = {"serial": 103}
+    assert seg.admitir(pendiente)  # en vivo, en la cola sin entregar
+    isapi(paginas=[("OK", [_viejo(s) for s in (101, 102, 110)])])
+    recuperador(seg, lambda r: None).correr()
+    assert seg.cursor == 102  # pendiente − 1, aunque se abandonó hasta 110
+    assert leer_estado(tmp_path)["cursor_serial"] == 102
+    seg.entregado(pendiente)
+    assert seg.cursor == 110
+
+
+def test_abandonado_no_pasa_el_techo(tmp_path):
+    seg = seguimiento(tmp_path, cursor=100)
+    assert seg.abrir_techo() == 100
+    seg.resolver_sin_envio([150])
+    assert seg.cursor == 100
+    seg.cerrar_techo()
+    assert seg.cursor == 150

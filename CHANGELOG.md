@@ -49,6 +49,11 @@ versionado siguiendo [SemVer](https://semver.org/lang/es/).
   record) dejaba el techo igual y la siguiente pedía el mismo rango: cursor congelado. Ahora
   el techo de una corrida cortada sube a lo procesado: con sobrantes, `min(sobrantes) − 1`;
   con la paginación cortada y sin sobrantes, el mayor serial obtenido; sin ítems, queda.
+- Los abandonados por antigüedad y los ítems sin record no subían el cursor: sin entregas
+  en vivo, cada reconexión volvía a pedir el mismo rango (también tras una corrida completa
+  con todo abandonado). Ahora son estado final igual que un 2xx (`resolver_sin_envio`):
+  suben el cursor hasta el mayor de ellos; un pendiente por debajo y el techo lo siguen
+  limitando. Los sobrantes por tope no se resuelven.
 
 ### Changed
 - `BackendForwarder._post_with_retries` devuelve `True` (2xx) / `False` (4xx) para informar
