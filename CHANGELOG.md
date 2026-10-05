@@ -67,6 +67,38 @@ versionado siguiendo [SemVer](https://semver.org/lang/es/).
   durante la inicialización dejaba la corrida relanzada sin techo y una 2xx en vivo podía
   saltar el hueco. La corrida completa siguiente recupera desde `serial + 1` (lo entregado
   en vivo sale como ya visto) y lo libera.
+- Cierre completo (auditoría contra las invariantes I1–I6):
+  - Reset de fábrica: cursor y techo en 0, puerta y pendientes limpios, y se recupera la
+    numeración nueva desde 1 (el evento en vivo que lo delata sale en vivo y la recuperación
+    lo ve como ya visto). Antes el cursor saltaba al serial en vivo y lo anterior se perdía.
+  - Reset que el umbral no ve (cursor < 1000 o numeración nueva ya avanzada): ancla en el
+    estado (serial y hora del último acceso entregado); si el terminal ya no tiene ese
+    serial con esa hora, es un reset. Formatos de hora distintos no cuentan como reset.
+  - Consulta por ventanas de 1000 seriales (`endSerialNo = desde + 999`) más un sondeo de
+    "hay más": con el reloj del terminal desordenado, el corte por cantidad sobre resultados
+    ordenados por hora podía subir el techo por encima de seriales nunca consultados.
+  - `responseStatusStrg` desconocido o ausente, o `MORE` sin ítems, ya no se toman como
+    consulta completa (liberaban el techo): la corrida falla y el techo se mantiene.
+  - Reintento sin reconexión: corrida fallida o entregas fallidas ⇒ otra corrida con
+    backoff (30 s … 15 min); corrida cortada ⇒ la ventana siguiente enseguida. Antes, con
+    el stream estable, el cursor quedaba congelado hasta la próxima reconexión. Tras un 401
+    no se reintenta hasta la próxima conexión (§5.9.574).
+  - Rechazo definitivo del backend (400/409/410/413/415/422) repetido 3 veces durante 24 h
+    ⇒ el serial se da por resuelto con un ERROR (antes congelaba el cursor para siempre);
+    401/403/404/408/429 y demás 4xx se siguen reintentando siempre.
+  - La recuperación usa como mucho la mitad de la cola del forwarder: 1000 recuperados ya no
+    llenan la cola y dejan afuera a los eventos en vivo.
+  - Un fallo al encolar un recuperado ya admitido lo deja fallido (antes quedaba pendiente y
+    "visto" para siempre: cursor congelado y nunca reenviado).
+  - Un fallo al crear el hilo de recuperación ya no tumba la conexión del stream ni deja la
+    recuperación desactivada para siempre.
+  - La escritura del estado (con `fsync`) se hace fuera del lock que comparte el stream.
+  - La puerta no olvida seriales todavía por encima del cursor (evita re-envíos dentro del
+    proceso con el cursor frenado).
+  - Entregas o corridas de la numeración vieja que terminan después de un reset ya no mueven
+    el cursor de la numeración nueva (época por reset).
+  - Un bloque JSON ilegible en el stream dispara una recuperación inmediata (podía ser un
+    evento en vivo perdido que las entregas siguientes saltaban).
 
 ### Límite de diseño
 - En el primer arranque (sin `/config/face_state.json`), un hueco anterior a la primera

@@ -326,6 +326,24 @@ def build_audit_record(event: dict) -> dict:
     }
 
 
+def _pausa(segundos: float) -> None:
+    """Pausa del hilo de recuperación (no usa ``time.sleep``: el loop del stream lo usa)."""
+    threading.Event().wait(segundos)
+
+
+def _bloque_json_ilegible(body: bytes) -> bool:
+    """True si el bloque parece JSON pero no se puede parsear (no una imagen ni un
+    heartbeat: esos parsean o no empiezan con '{')."""
+    texto = body.decode("utf-8", errors="replace").strip()
+    if not texto.startswith("{"):
+        return False
+    try:
+        json.loads(texto)
+    except json.JSONDecodeError:
+        return True
+    return False
+
+
 def record_desde_evento(evento: dict, log: logging.Logger) -> Optional[dict]:
     """Evento con la forma del alertStream ⇒ record del audit, por el MISMO camino del
     stream (``parse_event_block`` + ``build_audit_record``). Lo usa la recuperación por
@@ -439,6 +457,22 @@ class BackendForwarder:
                     self._dropped_count,
                 )
 
+    def enqueue_recuperado(self, record: dict, espera_max: float = 30.0) -> bool:
+        """Encola un record recuperado usando como mucho la mitad de la cola: el resto queda
+        para el vivo (una recuperación de 1000 eventos no puede dejar sin lugar a los eventos
+        en vivo). Espera hasta ``espera_max`` segundos a que haya lugar; False si no hubo."""
+        if not self.enabled:
+            return True
+        assert self._queue is not None
+        limite = max(1, self.cfg.backend_queue_maxsize // 2)
+        fin = time.monotonic() + espera_max
+        while self._queue.qsize() >= limite:
+            if time.monotonic() >= fin:
+                return False
+            _pausa(0.05)
+        self.enqueue(record)
+        return True
+
     def _worker(self) -> None:
         assert self._queue is not None
         # NUNCA salir del while por un fallo de envío: solo el sentinel rompe
@@ -449,12 +483,12 @@ class BackendForwarder:
             try:
                 if record is self._SENTINEL:
                     break
-                entregado = self._post_with_retries(record)
+                status = self._post_with_retries(record)
                 if self.seguimiento is not None:
-                    if entregado:
+                    if 200 <= status < 300:
                         self.seguimiento.entregado(record)
                     else:
-                        self.seguimiento.fallido(record)
+                        self.seguimiento.rechazado(record, status)
             except Exception as exc:
                 if self.seguimiento is not None and isinstance(record, dict):
                     self.seguimiento.fallido(record)
@@ -468,8 +502,8 @@ class BackendForwarder:
             finally:
                 self._queue.task_done()
 
-    def _post_with_retries(self, record: dict) -> bool:
-        """True con 2xx, False con 4xx (no reintentable). Agota 3 intentos ⇒ levanta."""
+    def _post_with_retries(self, record: dict) -> int:
+        """Status HTTP con 2xx o 4xx (no reintentable). Agota 3 intentos ⇒ levanta."""
         url = self.cfg.backend_url
         token = self.cfg.backend_secret
         timeout = self.cfg.backend_timeout_seconds
@@ -484,7 +518,7 @@ class BackendForwarder:
                     url, json=record, headers=headers, timeout=timeout
                 )
                 if 200 <= resp.status_code < 300:
-                    return True  # éxito
+                    return resp.status_code  # éxito
                 if 400 <= resp.status_code < 500:
                     # error de cliente: no reintentable (token malo, payload, etc.)
                     self.log.warning(
@@ -492,7 +526,7 @@ class BackendForwarder:
                         resp.status_code,
                         resp.text[:200],
                     )
-                    return False
+                    return resp.status_code
                 # 5xx -> reintentable
                 last_exc = RuntimeError(f"HTTP {resp.status_code}")
                 self.log.warning(
@@ -654,9 +688,10 @@ def run(cfg: Config, log: logging.Logger) -> None:
         forwarder.seguimiento = seguimiento
 
         def _destino_recuperado(record: dict) -> None:
-            # Solo audit + backend. NUNCA _maybe_emit_ha_webhook ni forward_to_ha.
+            # Solo backend + audit. NUNCA _maybe_emit_ha_webhook ni forward_to_ha.
+            if not forwarder.enqueue_recuperado(record):
+                raise RuntimeError("cola del backend ocupada")
             audit.write(record)
-            forwarder.enqueue(record)
 
         recuperador = Recuperador(
             terminal_host=cfg.terminal_host,
@@ -736,6 +771,10 @@ def run(cfg: Config, log: logging.Logger) -> None:
 
                     event = parse_event_block(body, log)
                     if event is None:
+                        # #54: un bloque JSON ilegible puede ser un evento en vivo perdido.
+                        # Recuperar ya (el techo se abre antes de la próxima entrega).
+                        if recuperador is not None and _bloque_json_ilegible(body):
+                            recuperador.lanzar()
                         continue
 
                     # Audit: siempre todos (el filtrado aplica solo a HA)
@@ -748,11 +787,15 @@ def run(cfg: Config, log: logging.Logger) -> None:
                     if seguimiento is None:
                         forwarder.enqueue(record)
                     else:
-                        seguimiento.observar_vivo(record)
+                        reset = seguimiento.observar_vivo(record)
                         if seguimiento.admitir(record):
                             forwarder.enqueue(record)
                         else:
                             log.debug("Serial %s ya encolado: no se repite.", record.get("serial"))
+                        if reset and recuperador is not None:
+                            # Reset de fábrica (cursor y techo ya en 0): recuperar la numeración
+                            # nueva desde 1. Este evento ya entró en vivo: sale como ya visto.
+                            recuperador.lanzar()
                     # Emit HTTP POST al webhook HA post-auth OK (§5.9.507). Side-
                     # effect defensivo tras el fan-out backend; discrimina adentro.
                     _maybe_emit_ha_webhook(

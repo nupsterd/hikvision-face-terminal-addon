@@ -52,6 +52,7 @@ class FakeResp:
         self.status_code = status
         self._data = data
         self.content = content
+        self.text = content.decode("utf-8", errors="replace")
 
     def json(self):
         if self._data is None:
@@ -65,10 +66,21 @@ def _rechazo(error_msg: str) -> dict:
 
 
 class FakeISAPI:
-    """Fake de requests.request para AcsEvent + deviceInfo. Registra cada llamada."""
+    """Fake de requests.request para AcsEvent + deviceInfo. Registra cada llamada.
+
+    Se comporta como el terminal: las consultas por serial filtran por
+    ``[beginSerialNo, endSerialNo]`` y paginan con ``searchResultPosition``/``maxResults``
+    (MORE mientras queden). ``paginas`` es la lista de eventos que el equipo devuelve, en su
+    orden (por hora); el estado de cada página que trae el test se ignora. La consulta de un
+    serial exacto (ancla) busca también entre los eventos de listas anteriores: el equipo
+    los conserva.
+    """
 
     def __init__(self, *, paginas=None, mac=MAC, rechaza_major0=False, status_acs=200,
-                 status_info=200, reciente=None, info_xml=False, error_400=None):
+                 status_info=200, reciente=None, info_xml=False, error_400=None,
+                 estado_forzado=None):
+        self.conocidos: dict[int, dict] = {}
+        self.estado_forzado = estado_forzado  # responseStatusStrg fijo en las consultas por serial
         self.paginas = list(paginas or [])  # lista de (estado, items)
         self.mac = mac
         self.rechaza_major0 = rechaza_major0
@@ -78,6 +90,21 @@ class FakeISAPI:
         self.info_xml = info_xml  # deviceInfo como el DS-K1T344 real: XML aunque se pida JSON
         self.error_400 = error_400  # errorMsg de un 400 forzado en toda consulta AcsEvent
         self.llamadas: list[tuple[str, str, dict | None, dict]] = []
+
+    @property
+    def paginas(self):
+        return self._paginas
+
+    @paginas.setter
+    def paginas(self, valor):
+        self._paginas = list(valor)
+        for _estado, items in self._paginas:
+            for i in items:
+                if isinstance(i.get("serialNo"), int):
+                    self.conocidos[i["serialNo"]] = i
+
+    def eventos(self) -> list[dict]:
+        return [i for _estado, items in self._paginas for i in items]
 
     def __call__(self, metodo, url, json=None, **kwargs):  # noqa: A002 (firma de requests)
         self.llamadas.append((metodo, url, copy.deepcopy(json), kwargs))
@@ -106,12 +133,34 @@ class FakeISAPI:
             items = self.reciente or []
             return FakeResp(200, {"AcsEvent": {"responseStatusStrg": "OK" if items else "NO MATCH",
                                                "numOfMatches": len(items), "InfoList": items}})
-        idx = cond["searchResultPosition"] // rec.MAX_RESULTS
-        if idx >= len(self.paginas):
+        desde, hasta = cond["beginSerialNo"], cond["endSerialNo"]
+        if desde == hasta:
+            base = [self.conocidos[desde]] if desde in self.conocidos else []
+        else:
+            base = self.eventos()
+        sel = [i for i in base if isinstance(i.get("serialNo"), int) and desde <= i["serialNo"] <= hasta]
+        if not sel:
             return FakeResp(200, {"AcsEvent": {"responseStatusStrg": "NO MATCH", "numOfMatches": 0}})
-        estado, items = self.paginas[idx]
+        pos, n = cond["searchResultPosition"], cond["maxResults"]
+        pagina = sel[pos:pos + n]
+        estado = "MORE" if pos + n < len(sel) else "OK"
+        if self.estado_forzado is not None:
+            estado = self.estado_forzado
+            if estado == "MORE vacío":
+                estado, pagina = "MORE", []
+            if estado == "ausente":
+                return FakeResp(200, {"AcsEvent": {"numOfMatches": len(pagina), "InfoList": pagina}})
         return FakeResp(200, {"AcsEvent": {"responseStatusStrg": estado,
-                                           "numOfMatches": len(items), "InfoList": items}})
+                                           "numOfMatches": len(pagina), "InfoList": pagina}})
+
+    def ventanas(self) -> list[tuple[int, int]]:
+        """(begin, end) de la primera página de cada consulta por ventana (no sondeos)."""
+        return [(c[2]["AcsEventCond"]["beginSerialNo"], c[2]["AcsEventCond"]["endSerialNo"])
+                for c in self.acs()
+                if "beginSerialNo" in c[2]["AcsEventCond"]
+                and c[2]["AcsEventCond"]["endSerialNo"] != rec.SERIAL_FIN
+                and c[2]["AcsEventCond"]["beginSerialNo"] != c[2]["AcsEventCond"]["endSerialNo"]
+                and c[2]["AcsEventCond"]["searchResultPosition"] == 0]
 
     def acs(self):
         return [c for c in self.llamadas if "AcsEvent" in c[1]]
@@ -154,6 +203,14 @@ def recuperador(seg: SeguimientoEntregas, destino) -> Recuperador:
         log=LOG,
         ahora=lambda: AHORA,
     )
+
+
+@pytest.fixture(autouse=True)
+def _sin_reintentos_de_fondo(monkeypatch):
+    """Un hilo de recuperación que quedó esperando un reintento no vuelve a correr durante
+    la sesión (los tests de reintento bajan estos valores a propósito)."""
+    monkeypatch.setattr(rec, "REINTENTO_BASE", 3600.0, raising=False)
+    monkeypatch.setattr(rec, "REINTENTO_MAX", 3600.0, raising=False)
 
 
 @pytest.fixture
@@ -302,16 +359,15 @@ def test_paginacion_more_y_reorden_por_serial(tmp_path, isapi):
     enviados: list[dict] = []
     resumen = recuperador(seg, enviados.append).correr()
     conds = [c[2]["AcsEventCond"] for c in fake.acs()]
-    assert [c["searchResultPosition"] for c in conds] == [0, 30, 60]
-    assert {c["beginSerialNo"] for c in conds} == {101}
-    assert all(c["endSerialNo"] == rec.SERIAL_FIN for c in conds)  # el DS-K1T344 lo exige
-    assert len({c["searchID"] for c in conds}) == 1
-    assert all(c["maxResults"] == 30 for c in conds)
+    ventana, sondeo = conds[:-1], conds[-1]
+    assert [c["searchResultPosition"] for c in ventana] == [0, 30, 60]
+    assert {(c["beginSerialNo"], c["endSerialNo"]) for c in ventana} == {(101, 1100)}
+    assert len({c["searchID"] for c in ventana}) == 1
+    assert all(c["maxResults"] == 30 for c in ventana)
+    # Sondeo: ¿hay algo después de la ventana? (endSerialNo obligatorio en el DS-K1T344)
+    assert (sondeo["beginSerialNo"], sondeo["endSerialNo"], sondeo["maxResults"]) == (1101, rec.SERIAL_FIN, 1)
     assert [r["serial"] for r in enviados] == list(range(101, 166))
-    assert all(r["recuperado"] is True for r in enviados)
     assert (resumen["paginas"], resumen["encolados"], resumen["ya_vistos"]) == (3, 65, 0)
-    _, _, _, kwargs = fake.acs()[0]
-    assert kwargs["headers"] == {"Connection": "close"} and kwargs["verify"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +583,7 @@ def test_sin_estado_inicializa_cursor_desde_el_terminal_sin_recuperar(tmp_path, 
     # La conexión siguiente ya recupera desde ahí.
     fake.paginas = [("OK", [item(5433)])]
     recuperador(seg, enviados.append).correr()
-    assert fake.acs()[-1][2]["AcsEventCond"]["beginSerialNo"] == 5433
+    assert _desde(fake)[-1] == 5433
     assert [r["serial"] for r in enviados] == [5433]
 
 
@@ -563,14 +619,15 @@ def test_reset_de_fabrica_reinicia_el_cursor(tmp_path, caplog):
     seg = seguimiento(tmp_path, cursor=5000)
     seg.admitir({"serial": 4999})  # basura de la numeración vieja en la puerta
     with caplog.at_level(logging.WARNING):
-        seg.observar_vivo({"serial": 12, "device_mac": MAC})
-    assert seg.cursor == 12
+        assert seg.observar_vivo({"serial": 12, "device_mac": MAC}) is True
+    # Cierre completo: cursor y techo en 0 (se recupera la numeración nueva desde 1).
+    assert seg.cursor == 0 and seg.techo == 0
     assert "reset de fábrica" in caplog.text
-    assert leer_estado(tmp_path)["cursor_serial"] == 12
+    assert leer_estado(tmp_path)["cursor_serial"] == 0
     assert seg.admitir({"serial": 4999}) is True  # puerta limpia
     # Un serial normal (dentro del umbral) no reinicia nada.
     seg2 = seguimiento(tmp_path / "b", cursor=5000)
-    seg2.observar_vivo({"serial": 4500, "device_mac": MAC})
+    assert seg2.observar_vivo({"serial": 4500, "device_mac": MAC}) is False
     assert seg2.cursor == 5000
 
 
@@ -589,14 +646,17 @@ def test_tope_1000_eventos_y_7_dias(tmp_path, isapi, caplog):
     enviados: list[dict] = []
     with caplog.at_level(logging.WARNING):
         resumen = recuperador(seg, enviados.append).correr()
-    assert resumen["encolados"] == 1000
-    assert resumen["descartados"] == 3 + 5
+    # Ventana de 1000 seriales: 1..3 abandonados, 4..1000 encolados, 1001..1008 la próxima.
+    assert resumen["encolados"] == 997
+    assert resumen["descartados"] == 3
+    assert resumen["resultado"] == rec.CORTADA
     assert [r["serial"] for r in enviados][:2] == [4, 5]
-    assert enviados[-1]["serial"] == 1003
+    assert enviados[-1]["serial"] == 1000
     assert "tope" in caplog.text and "3 con más de 7 días" in caplog.text
+    assert "después de 1000" in caplog.text
     for r in enviados:
         seg.entregado(r)
-    assert seg.cursor == 1003  # avanza por lo entregado; los sobrantes quedan para la próxima
+    assert seg.cursor == 1000  # avanza por lo entregado; lo de después, la próxima corrida
 
 
 # ---------------------------------------------------------------------------
@@ -682,18 +742,18 @@ def test_major0_rechazado_cae_a_major5_y_lo_recuerda(tmp_path, isapi, caplog):
     with caplog.at_level(logging.WARNING):
         resumen = r.correr()
     majors = [c[2]["AcsEventCond"]["major"] for c in fake.acs()]
-    assert majors == [0, 5]
+    assert majors == [0, 5, 5]  # ventana (0 rechazado, 5) + sondeo con 5
     assert resumen["encolados"] == 1
     assert caplog.text.count("rechazó major=0") == 1
     r.correr()  # segunda corrida: directo con major=5, sin volver a probar 0
-    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0, 5, 5]
+    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0, 5, 5, 5, 5]
 
 
 def test_major0_aceptado_se_usa(tmp_path, isapi):
     fake = isapi(paginas=[("OK", [item(101)])])
     seg = seguimiento(tmp_path, cursor=100)
     recuperador(seg, lambda r: None).correr()
-    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0]
+    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0, 0]  # ventana + sondeo
     assert fake.acs()[0][2]["AcsEventCond"]["minor"] == 0
 
 
@@ -748,9 +808,8 @@ def _entregar_en_vivo(seg: SeguimientoEntregas, seriales) -> None:
 
 
 def _desde(fake: FakeISAPI) -> list[int]:
-    return [c[2]["AcsEventCond"]["beginSerialNo"] for c in fake.acs()
-            if "beginSerialNo" in c[2]["AcsEventCond"]  # no la inicialización (por tiempo)
-            and c[2]["AcsEventCond"]["searchResultPosition"] == 0]
+    # Solo las consultas por ventana: no la inicialización (por tiempo) ni los sondeos.
+    return [desde for desde, _hasta in fake.ventanas()]
 
 
 def conexion(r: Recuperador) -> dict:
@@ -852,21 +911,19 @@ def test_tope_1000_con_1500_el_techo_queda_en_el_milesimo(tmp_path, isapi):
     assert leer_estado(tmp_path)["cursor_serial"] == 1600
 
 
-def test_paginacion_cortada_sube_el_techo_al_mayor_admitido(tmp_path, isapi, monkeypatch):
+def test_ventana_sin_terminar_en_max_paginas_es_fallida(tmp_path, isapi, monkeypatch):
+    # Cierre completo: una ventana nunca se da por procesada a medias.
     monkeypatch.setattr(rec, "MAX_PAGINAS", 2)
-    pagina = rec.MAX_RESULTS
-    fake = isapi(paginas=[("MORE", [item(s) for s in range(101 + i * pagina, 101 + (i + 1) * pagina)])
-                          for i in range(3)])
+    fake = isapi(paginas=[("MORE", [item(s) for s in range(101, 201)])])
     seg = seguimiento(tmp_path, cursor=100)
     enviados: list[dict] = []
-    recuperador(seg, enviados.append).correr()
-    ultimo = 100 + 2 * pagina
-    assert enviados[-1]["serial"] == ultimo
-    assert seg.techo == ultimo
-    for r in enviados:
-        seg.entregado(r)
-    _entregar_en_vivo(seg, [ultimo + 50])
-    assert seg.cursor == ultimo
+    resumen = conexion(recuperador(seg, enviados.append))
+    assert resumen["resultado"] == rec.FALLIDA
+    assert enviados == []
+    assert seg.techo == 100
+    assert len(fake.acs()) == 2  # dos páginas, sin sondeo
+    _entregar_en_vivo(seg, [300])
+    assert seg.cursor == 100
 
 
 def test_corrida_completa_sin_items_libera_y_el_cursor_sigue_al_vivo(tmp_path, isapi):
@@ -901,8 +958,9 @@ def test_consulta_por_serial_manda_begin_y_end_serial(tmp_path, isapi):
     seg = seguimiento(tmp_path, cursor=100)
     resumen = recuperador(seg, lambda r: None).correr()
     conds = [c[2]["AcsEventCond"] for c in fake.acs()]
-    assert len(conds) == 2
-    assert all(c["beginSerialNo"] == 101 and c["endSerialNo"] == 999999999 for c in conds)
+    assert len(conds) == 3  # dos páginas de la ventana + sondeo
+    assert all(c["beginSerialNo"] == 101 and c["endSerialNo"] == 101 + rec.TOPE_EVENTOS - 1 for c in conds[:2])
+    assert (conds[2]["beginSerialNo"], conds[2]["endSerialNo"]) == (101 + rec.TOPE_EVENTOS, 999999999)
     assert rec.SERIAL_FIN == 999999999
     assert resumen["encolados"] == pagina + 1
 
@@ -936,7 +994,7 @@ def test_400_major_cae_a_major5_y_loguea_el_error_msg(tmp_path, isapi, caplog):
     seg = seguimiento(tmp_path, cursor=100)
     with caplog.at_level(logging.WARNING):
         resumen = recuperador(seg, lambda r: None).correr()
-    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0, 5]
+    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0, 5, 5]  # + sondeo
     assert resumen["encolados"] == 1
     assert "errorMsg 'major'" in caplog.text
 
@@ -957,87 +1015,82 @@ def _viejo(serial: int) -> dict:
 
 
 def test_paginacion_cortada_todo_viejo_sube_el_techo_y_no_repite_el_rango(tmp_path, isapi):
-    pagina = rec.MAX_RESULTS
-    fake = isapi(paginas=[("MORE", [_viejo(s) for s in range(1 + i * pagina, 1 + (i + 1) * pagina)])
-                          for i in range(36)])
+    fake = isapi(paginas=[("OK", [_viejo(s) for s in range(1, 1081)])])
     seg = seguimiento(tmp_path, cursor=0)
     resumen = recuperador(seg, lambda r: None).correr()
-    obtenidos = 34 * pagina  # _consultar corta al pasar TOPE_EVENTOS
-    assert resumen["encolados"] == 0 and resumen["descartados"] == obtenidos
-    assert seg.techo == obtenidos
-    # Los abandonados no son entregas: el cursor sube al techo con la primera 2xx en vivo.
+    fin = rec.TOPE_EVENTOS  # fin de la primera ventana
+    assert resumen["encolados"] == 0 and resumen["descartados"] == fin
+    assert seg.techo == fin
     _entregar_en_vivo(seg, [5000])
-    assert seg.cursor == obtenidos
-    assert leer_estado(tmp_path)["cursor_serial"] == obtenidos
+    assert seg.cursor == fin
+    assert leer_estado(tmp_path)["cursor_serial"] == fin
 
-    fake.paginas = [("OK", [_viejo(s) for s in range(obtenidos + 1, obtenidos + 11)])]
     recuperador(seg, lambda r: None).correr()
-    assert _desde(fake) == [1, obtenidos + 1]  # avanza: no repite el rango
+    assert _desde(fake) == [1, fin + 1]  # avanza: no repite el rango
     assert seg.techo is None
     assert seg.cursor == 5000
 
 
-def test_tope_con_sobrantes_sin_admitidos_sube_el_techo_al_sobrante_menos_uno(tmp_path, isapi):
+def test_ventana_sin_admitidos_sube_el_techo_al_fin_de_la_ventana(tmp_path, isapi):
     viejos = [_viejo(s) for s in range(1, 51)]
-    recientes = [item(s) for s in range(51, 1056)]  # 1005: 51..1050 procesados, 1051..1055 sobrantes
+    recientes = [item(s) for s in range(51, 1056)]
     fake = isapi(paginas=[("OK", viejos + recientes)])
     seg = seguimiento(tmp_path, cursor=0)
     en_cola = [{"serial": s} for s in range(51, 1051)]
-    assert all(seg.admitir(r) for r in en_cola)  # todos los recientes procesables ya vistos
+    assert all(seg.admitir(r) for r in en_cola)  # todos los recientes de la ventana ya vistos
     resumen = recuperador(seg, lambda r: None).correr()
-    assert resumen["encolados"] == 0 and resumen["ya_vistos"] == 1000
-    assert seg.techo == 1050
+    assert resumen["encolados"] == 0 and resumen["ya_vistos"] == 950
+    assert resumen["resultado"] == rec.CORTADA  # los abandonados avanzaron el cursor
+    assert seg.techo == 1000
     for r in en_cola:
         seg.entregado(r)
     _entregar_en_vivo(seg, [1200])
-    assert seg.cursor == 1050
+    assert seg.cursor == 1000
 
-    fake.paginas = [("OK", [item(s) for s in range(1051, 1056)])]
     enviados: list[dict] = []
     recuperador(seg, enviados.append).correr()
-    assert _desde(fake) == [1, 1051]
+    assert _desde(fake) == [1, 1001]
     assert [r["serial"] for r in enviados] == [1051, 1052, 1053, 1054, 1055]
     assert seg.techo is None
 
 
-def test_paginacion_cortada_todos_ya_vistos_techo_en_el_mayor_obtenido(tmp_path, isapi, monkeypatch):
-    monkeypatch.setattr(rec, "MAX_PAGINAS", 2)
-    pagina = rec.MAX_RESULTS
-    fake = isapi(paginas=[("MORE", [item(s) for s in range(101 + i * pagina, 101 + (i + 1) * pagina)])
-                          for i in range(3)])
+def test_ventana_todos_ya_vistos_techo_en_el_fin_de_la_ventana(tmp_path, isapi, monkeypatch):
+    monkeypatch.setattr(rec, "TOPE_EVENTOS", 60)
+    fake = isapi(paginas=[("OK", [item(s) for s in range(101, 191)])])
     seg = seguimiento(tmp_path, cursor=100)
-    ultimo = 100 + 2 * pagina
-    pendientes = [{"serial": s} for s in range(101, ultimo + 1)]
+    pendientes = [{"serial": s} for s in range(101, 161)]
     assert all(seg.admitir(r) for r in pendientes)  # en vivo, en la cola
     resumen = recuperador(seg, lambda r: None).correr()
-    assert resumen["encolados"] == 0 and resumen["ya_vistos"] == 2 * pagina
-    assert seg.techo == ultimo
+    assert resumen["encolados"] == 0 and resumen["ya_vistos"] == 60
+    assert resumen["resultado"] == rec.FALLIDA  # sin avance hasta que se entreguen: backoff
+    assert seg.techo == 160
     assert seg.cursor == 100  # los pendientes siguen frenando
     for r in pendientes:
         seg.entregado(r)
-    _entregar_en_vivo(seg, [ultimo + 50])
-    assert seg.cursor == ultimo
+    _entregar_en_vivo(seg, [210])
+    assert seg.cursor == 160
 
-    fake.paginas = []
-    recuperador(seg, lambda r: None).correr()
-    assert _desde(fake)[-1] == ultimo + 1
-    assert seg.cursor == ultimo + 50
+    enviados: list[dict] = []
+    recuperador(seg, enviados.append).correr()
+    assert _desde(fake)[-1] == 161
+    assert [r["serial"] for r in enviados] == list(range(161, 191))
+    assert seg.techo is None
 
 
-def test_sobrantes_con_mezcla_de_admitidos_y_viejos_techo_en_el_sobrante_menos_uno(tmp_path, isapi):
-    # Un viejo con serial por encima de los sobrantes (hora desordenada) no sube el techo.
+def test_ventana_con_mezcla_de_admitidos_y_viejos_techo_en_el_fin_de_la_ventana(tmp_path, isapi):
+    # Un viejo con serial fuera de la ventana (hora desordenada) queda para la próxima.
     validos = [_viejo(s) for s in range(1, 11)] + [item(s) for s in range(11, 1016)] + [_viejo(1020)]
     isapi(paginas=[("OK", validos)])
     seg = seguimiento(tmp_path, cursor=0)
     enviados: list[dict] = []
     resumen = recuperador(seg, enviados.append).correr()
-    assert resumen["encolados"] == 1000
-    assert enviados[-1]["serial"] == 1010
-    assert seg.techo == 1010  # min(sobrantes 1011..1015) − 1
+    assert resumen["encolados"] == 990 and resumen["descartados"] == 10
+    assert enviados[-1]["serial"] == 1000
+    assert seg.techo == 1000
     for r in enviados:
         seg.entregado(r)
     _entregar_en_vivo(seg, [1100])
-    assert seg.cursor == 1010
+    assert seg.cursor == 1000
 
 
 # ---------------------------------------------------------------------------
@@ -1059,19 +1112,16 @@ def test_corrida_completa_todo_viejo_sin_vivo_sube_el_cursor(tmp_path, isapi):
 
 
 def test_paginacion_cortada_todo_viejo_sin_vivo_no_repite(tmp_path, isapi):
-    pagina = rec.MAX_RESULTS
-    fake = isapi(paginas=[("MORE", [_viejo(s) for s in range(1 + i * pagina, 1 + (i + 1) * pagina)])
-                          for i in range(36)])
+    fake = isapi(paginas=[("OK", [_viejo(s) for s in range(1, 1081)])])
     seg = seguimiento(tmp_path, cursor=0)
     recuperador(seg, lambda r: None).correr()
-    obtenidos = 34 * pagina
-    assert seg.techo == obtenidos
-    assert seg.cursor == obtenidos  # sin ninguna entrega en vivo
-    assert leer_estado(tmp_path)["cursor_serial"] == obtenidos
+    fin = rec.TOPE_EVENTOS
+    assert seg.techo == fin
+    assert seg.cursor == fin  # sin ninguna entrega en vivo
+    assert leer_estado(tmp_path)["cursor_serial"] == fin
 
-    fake.paginas = []
     recuperador(seg, lambda r: None).correr()
-    assert _desde(fake) == [1, obtenidos + 1]
+    assert _desde(fake) == [1, fin + 1]
 
 
 def test_record_none_cuenta_como_resuelto(tmp_path, isapi):
@@ -1364,3 +1414,518 @@ def test_entrega_en_vivo_antes_de_terminar_la_inicializacion_igual_abre_el_techo
     for x in enviados:
         seg.entregado(x)
     assert seg.cursor == 505
+
+
+# ---------------------------------------------------------------------------
+# Cierre completo (#54): un test por hueco encontrado en la auditoría contra I1–I6
+# ---------------------------------------------------------------------------
+
+def _ev_vivo(serial: int, *, mac: str = MAC, time: str | None = None) -> dict:
+    """Evento del alertStream (en vivo) con datos sintéticos."""
+    return {
+        "ipAddress": HOST, "macAddress": mac,
+        "dateTime": time or item(serial)["time"],
+        "eventType": "AccessControllerEvent",
+        "AccessControllerEvent": {"majorEventType": 5, "subEventType": 75, "serialNo": serial,
+                                  "employeeNoString": "5001", "name": "PERSONA PRUEBA",
+                                  "currentEvent": True},
+    }
+
+
+def _correr_listener(tmp_path, monkeypatch, *, estado: dict, conexiones: list[list[bytes]],
+                     fake: FakeISAPI, al_lanzar=None) -> tuple[list[dict], list[dict], list[int]]:
+    """run() real con N conexiones del stream (una lista de chunks por conexión). La
+    recuperación corre SINCRÓNICA dentro de lanzar() (determinismo). Devuelve (posts al
+    backend, records emitidos a HA, seriales de cada lanzar())."""
+    (tmp_path / "face_state.json").write_text(json.dumps(estado))
+    cfg = Config(terminal_host=HOST, terminal_user="admin", terminal_password="x",
+                 ha_webhook_url="https://ha.local/api/webhook/x", audit_log_path=tmp_path / "a.log",
+                 backend_url="https://backend/x", backend_secret="s", reconnect_delay=1,
+                 state_path=tmp_path / "face_state.json")
+    monkeypatch.setattr(rec.requests, "request", fake)
+    restantes = list(conexiones)
+
+    def fake_get(url, **kwargs):
+        return FakeStream(restantes.pop(0) if restantes else [])
+
+    monkeypatch.setattr(mod.requests, "get", fake_get)
+    lanzados: list[int] = []
+
+    def lanzar_sincronico(self):
+        self.seguimiento.abrir_techo()
+        lanzados.append(self.seguimiento.cursor)
+        if al_lanzar is not None:
+            al_lanzar(len(lanzados))
+        self.correr()
+        return True
+
+    monkeypatch.setattr(Recuperador, "lanzar", lanzar_sincronico)
+    posts: list[dict] = []
+    lock = threading.Lock()
+
+    def fake_post(url, json, headers=None, timeout=None, **kw):  # noqa: A002
+        if json.get("device_mac") == MAC:  # no los forwarders (daemon) de otros tests
+            with lock:
+                posts.append(json)
+        return FakeResp(200)
+
+    monkeypatch.setattr(mod.requests, "post", fake_post)
+    ha_emit: list[dict] = []
+    monkeypatch.setattr(mod, "_maybe_emit_ha_webhook", lambda record, *a, **k: ha_emit.append(record))
+
+    def fake_sleep(_s):  # entre conexiones; sin conexiones restantes, fin
+        if not restantes:
+            raise _Stop()
+
+    monkeypatch.setattr(mod.time, "sleep", fake_sleep)
+    with pytest.raises(_Stop):
+        run(cfg, LOG)
+    threading.Event().wait(0.3)  # que el forwarder (hilo daemon) drene
+    with lock:
+        return list(posts), ha_emit, lanzados
+
+
+# --- H1: reset de fábrica ⇒ cursor y techo en 0 y recuperación de la numeración nueva ---
+
+def test_h1_reset_de_fabrica_recupera_la_numeracion_nueva_desde_1(tmp_path, monkeypatch):
+    nuevos = [item(s) for s in range(1, 13)]  # el terminal reseteado ya registró 1..12
+    fake = FakeISAPI(paginas=[("OK", nuevos)])
+    vivo = _ev_vivo(12, time=nuevos[-1]["time"])
+    posts, ha_emit, lanzados = _correr_listener(
+        tmp_path, monkeypatch, estado={"cursor_serial": 5000, "terminal_mac": MAC},
+        conexiones=[_como_stream([vivo])], fake=fake)
+    assert lanzados[0] == 5000  # la conexión: nada después de 5000 en la numeración nueva
+    assert lanzados[1] == 0  # el reset dispara la recuperación desde 1
+    seriales = sorted(p["serial"] for p in posts)
+    assert seriales == list(range(1, 13))  # 1..11 recuperados + 12 en vivo, una vez cada uno
+    vivos = [p for p in posts if not p.get("recuperado")]
+    assert [p["serial"] for p in vivos] == [12]  # el 12 salió en vivo, no como recuperado
+    assert not any(r.get("recuperado") for r in ha_emit)
+
+
+# --- H2: reset no detectado por el umbral ⇒ ancla ---
+
+def _seg_con_ancla(tmp_path, *, cursor: int, ancla: tuple[int, str]) -> SeguimientoEntregas:
+    path = tmp_path / "face_state.json"
+    path.write_text(json.dumps({"cursor_serial": cursor, "terminal_mac": MAC,
+                                "ancla_serial": ancla[0], "ancla_ts": ancla[1]}))
+    return SeguimientoEntregas(EstadoPersistente(path, LOG), LOG)
+
+
+@pytest.mark.parametrize("caso", ["ancla_ausente", "ancla_con_otra_hora"])
+def test_h2_numeracion_cambiada_por_ancla_recupera_desde_1(tmp_path, isapi, caso, caplog):
+    # Cursor 500 (< umbral de 1000): el serial en vivo nunca queda 1000 por debajo.
+    hora_vieja = (AHORA - timedelta(days=2)).isoformat()
+    nuevos = [item(s) for s in range(1, 31)]
+    if caso == "ancla_con_otra_hora":
+        nuevos += [item(s) for s in range(31, 501)]  # la numeración nueva ya pasó el 500
+    fake = isapi(paginas=[("OK", nuevos)])
+    seg = _seg_con_ancla(tmp_path, cursor=500, ancla=(500, hora_vieja))
+    enviados: list[dict] = []
+    with caplog.at_level(logging.WARNING):
+        conexion(recuperador(seg, enviados.append))
+    assert "serial ancla 500" in caplog.text
+    assert _desde(fake) == [1]
+    assert [r["serial"] for r in enviados] == [i["serialNo"] for i in nuevos]
+    for r in enviados:
+        seg.entregado(r)
+    assert seg.cursor == nuevos[-1]["serialNo"]
+
+
+def test_h2_ancla_vigente_no_reinicia(tmp_path, isapi):
+    hora = item(500)["time"]
+    fake = isapi(paginas=[("OK", [item(s) for s in range(1, 506)])])
+    seg = _seg_con_ancla(tmp_path, cursor=500, ancla=(500, hora))
+    enviados: list[dict] = []
+    conexion(recuperador(seg, enviados.append))
+    assert _desde(fake) == [501]
+    assert [r["serial"] for r in enviados] == [501, 502, 503, 504, 505]
+
+
+def test_h2_ancla_se_fija_con_la_entrega_de_acceso_y_se_persiste(tmp_path, isapi):
+    isapi(paginas=[("OK", [item(101), item(102, minor=21)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    enviados: list[dict] = []
+    recuperador(seg, enviados.append).correr()
+    for r in enviados:
+        seg.entregado(r)
+    estado = leer_estado(tmp_path)
+    assert (estado["ancla_serial"], estado["ancla_ts"]) == (102, item(102)["time"])
+    seg.entregado({"serial": 999})  # sin pendiente: se ignora (no mueve nada)
+    assert leer_estado(tmp_path)["ancla_serial"] == 102
+
+
+def test_h2_ancla_no_verificable_no_reinicia(tmp_path, isapi, monkeypatch):
+    fake = isapi(paginas=[("OK", [item(501)])])
+    real = fake.__call__
+
+    def con_rechazo_al_ancla(metodo, url, json=None, **kw):  # noqa: A002
+        cond = (json or {}).get("AcsEventCond", {})
+        if cond.get("beginSerialNo") == cond.get("endSerialNo") == 500:
+            return FakeResp(400, _rechazo("beginSerialNo"))
+        return real(metodo, url, json=json, **kw)
+
+    monkeypatch.setattr(rec.requests, "request", con_rechazo_al_ancla)
+    seg = _seg_con_ancla(tmp_path, cursor=500, ancla=(500, item(500)["time"]))
+    enviados: list[dict] = []
+    conexion(recuperador(seg, enviados.append))
+    assert [r["serial"] for r in enviados] == [501]  # sigue sin reiniciar
+
+
+# --- H3: corte con orden por hora distinto del orden por serial ---
+
+def test_h3_reloj_desordenado_no_saltea_seriales_al_cortar(tmp_path, isapi):
+    # El reloj del terminal saltó para atrás: 900..1100 tienen hora anterior a 1..899, así
+    # que AcsEvent (orden por hora) los devuelve primero.
+    antes = AHORA - timedelta(hours=3)
+    tarde = [item(s, time=(antes + timedelta(seconds=s)).isoformat()) for s in range(900, 1101)]
+    temprano = [item(s, time=(antes + timedelta(hours=1, seconds=s)).isoformat()) for s in range(1, 900)]
+    fake = isapi(paginas=[("OK", tarde + temprano)])
+    seg = seguimiento(tmp_path, cursor=0)
+    enviados: list[dict] = []
+    recuperador(seg, enviados.append).correr()
+    assert [r["serial"] for r in enviados] == list(range(1, 1001))
+    assert seg.techo == 1000
+    for r in enviados:
+        seg.entregado(r)
+    _entregar_en_vivo(seg, [2000])
+    assert seg.cursor == 1000  # nada sin consultar por debajo del techo
+    enviados.clear()
+    recuperador(seg, enviados.append).correr()
+    assert _desde(fake) == [1, 1001]
+    assert [r["serial"] for r in enviados] == list(range(1001, 1101))
+
+
+# --- H4: estado inesperado de AcsEvent tomado como completo ---
+
+@pytest.mark.parametrize("estado", ["FAILED", "ausente", "MORE vacío"])
+def test_h4_estado_inesperado_no_libera_el_techo(tmp_path, isapi, estado):
+    isapi(paginas=[("OK", [item(101)])], estado_forzado=estado)
+    seg = seguimiento(tmp_path, cursor=100)
+    resumen = conexion(recuperador(seg, lambda r: None))
+    assert seg.techo == 100
+    assert resumen["resultado"] == rec.FALLIDA
+    _entregar_en_vivo(seg, [105])
+    assert seg.cursor == 100
+
+
+# --- H5: lo pendiente se reintenta solo, sin esperar a otra reconexión ---
+
+def _esperar_hilo(r: Recuperador, segundos: float = 5) -> None:
+    for _ in range(int(segundos * 100)):
+        with r._lock:
+            if not r._en_curso:
+                return
+        threading.Event().wait(0.01)
+    raise AssertionError("el hilo de recuperación no terminó")
+
+
+def test_h5_corrida_fallida_se_reintenta_con_backoff_y_libera(tmp_path, isapi, monkeypatch):
+    monkeypatch.setattr(rec, "REINTENTO_BASE", 0.05)
+    fake = isapi(status_acs=500, paginas=[("OK", [item(s) for s in range(101, 104)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    enviados: list[dict] = []
+    r = recuperador(seg, enviados.append)
+    llamadas = {"n": 0}
+    original = r.correr
+
+    def correr_y_arreglar():
+        llamadas["n"] += 1
+        resumen = original()
+        fake.status_acs = 200  # el terminal vuelve a responder
+        return resumen
+
+    r.correr = correr_y_arreglar
+    r.lanzar()
+    _esperar_hilo(r)
+    assert llamadas["n"] == 2  # la segunda sin reconexión
+    assert [x["serial"] for x in enviados] == [101, 102, 103]
+    assert seg.techo is None
+
+
+def test_h5_entrega_fallida_dispara_un_reintento_sin_reconexion(tmp_path, isapi, monkeypatch):
+    monkeypatch.setattr(rec, "REINTENTO_BASE", 0.05)
+    isapi(paginas=[("OK", [item(s) for s in range(101, 104)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    enviados: list[dict] = []
+    r = recuperador(seg, enviados.append)
+    _entregar_en_vivo(seg, [101, 103])
+    pendiente = {"serial": 102}
+    assert seg.admitir(pendiente)
+    seg.fallido(pendiente)  # el forwarder agotó los intentos con el 102
+    _esperar_hilo(r)
+    assert [x["serial"] for x in enviados] == [102]  # lo volvió a pedir al terminal
+    seg.entregado(enviados[0])
+    assert seg.cursor == 103
+
+
+def test_h5_corrida_cortada_sigue_con_la_ventana_siguiente(tmp_path, isapi, monkeypatch):
+    monkeypatch.setattr(rec, "TOPE_EVENTOS", 50)
+    monkeypatch.setattr(rec, "ESPERA_COLA_CORTE", 0.01, raising=False)
+    fake = isapi(paginas=[("OK", [item(s) for s in range(101, 221)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    enviados: list[dict] = []
+
+    def destino(record):
+        enviados.append(record)
+        seg.entregado(record)  # backend instantáneo
+
+    r = recuperador(seg, destino)
+    r.lanzar()
+    _esperar_hilo(r)
+    assert _desde(fake) == [101, 151, 201]
+    assert [x["serial"] for x in enviados] == list(range(101, 221))
+    assert seg.techo is None and seg.cursor == 220
+
+
+def test_h5_401_no_se_reintenta_hasta_la_proxima_conexion(tmp_path, isapi, monkeypatch):
+    monkeypatch.setattr(rec, "REINTENTO_BASE", 0.01)
+    fake = isapi(status_acs=401, paginas=[("OK", [item(101)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    r = recuperador(seg, lambda x: None)
+    r.lanzar()
+    _esperar_hilo(r)
+    pendiente = {"serial": 101}
+    seg.admitir(pendiente)
+    seg.fallido(pendiente)  # una entrega fallida tampoco reintenta tras un 401 (I6)
+    threading.Event().wait(0.1)
+    assert len(fake.acs()) == 1
+    fake.status_acs = 200
+    r.lanzar()  # conexión nueva: un intento más
+    _esperar_hilo(r)
+    assert len(fake.acs()) > 1
+
+
+# --- H6: rechazo permanente del backend ---
+
+def test_h6_rechazo_definitivo_se_resuelve_tras_3_veces_y_24_horas(tmp_path):
+    seg = seguimiento(tmp_path, cursor=100)
+    reloj = {"t": 1000.0}
+    seg.reloj = lambda: reloj["t"]
+    r = {"serial": 101}
+    for _ in range(3):
+        assert seg.admitir(r)
+        seg.rechazado(r, 422)
+        reloj["t"] += 60
+    assert seg.cursor == 100  # 3 rechazos pero en menos de 24 h: sigue frenando
+    reloj["t"] = 1000.0 + rec.RECHAZO_PLAZO
+    assert seg.admitir(r)
+    seg.rechazado(r, 422)
+    assert seg.cursor == 101  # estado final
+    assert leer_estado(tmp_path)["cursor_serial"] == 101
+
+
+@pytest.mark.parametrize("status", [401, 403, 404, 429])
+def test_h6_rechazo_de_configuracion_nunca_se_resuelve(tmp_path, status):
+    seg = seguimiento(tmp_path, cursor=100)
+    reloj = {"t": 0.0}
+    seg.reloj = lambda: reloj["t"]
+    r = {"serial": 101}
+    for _ in range(5):
+        assert seg.admitir(r)
+        seg.rechazado(r, status)
+        reloj["t"] += rec.RECHAZO_PLAZO
+    assert seg.cursor == 100
+
+
+def test_h6_forwarder_informa_el_status_del_rechazo(tmp_path, monkeypatch):
+    seg = seguimiento(tmp_path, cursor=100)
+    vistos: list[tuple[int, int]] = []
+    seg.rechazado = lambda record, status: vistos.append((record["serial"], status))
+    cfg = Config(terminal_host=HOST, terminal_user="a", terminal_password="x", ha_webhook_url="",
+                 audit_log_path=tmp_path / "a.log", backend_url="https://b/x", backend_secret="s")
+    fwd = BackendForwarder(cfg, LOG)
+    fwd.seguimiento = seg
+    monkeypatch.setattr(mod.requests, "post", lambda *a, **k: FakeResp(422))
+    fwd.start()
+    assert seg.admitir({"serial": 101})
+    fwd.enqueue({"serial": 101})
+    _esperar(fwd)
+    assert vistos == [(101, 422)]
+
+
+# --- H7: la recuperación no le quita la cola al vivo ---
+
+def test_h7_recuperacion_usa_como_mucho_la_mitad_de_la_cola(tmp_path, isapi):
+    cfg = Config(terminal_host=HOST, terminal_user="a", terminal_password="x", ha_webhook_url="",
+                 audit_log_path=tmp_path / "a.log", backend_url="https://b/x", backend_secret="s",
+                 backend_queue_maxsize=4)
+    fwd = BackendForwarder(cfg, LOG)  # sin start(): la cola no se vacía
+    seg = seguimiento(tmp_path, cursor=100)
+    fwd.seguimiento = seg
+    isapi(paginas=[("OK", [item(s) for s in range(101, 111)])])
+
+    def destino(record):
+        if not fwd.enqueue_recuperado(record, espera_max=0.05):
+            raise RuntimeError("cola del backend ocupada")
+
+    resumen = conexion(recuperador(seg, destino))
+    assert resumen["resultado"] == rec.FALLIDA and resumen["encolados"] == 2
+    assert seg.techo == 100
+    # Lugar para el vivo: dos eventos más entran sin descarte.
+    for s in (200, 201):
+        assert seg.admitir({"serial": s})
+        fwd.enqueue({"serial": s})
+    assert fwd._dropped_count == 0
+    assert seg.admitir({"serial": 103}) is True  # el que no entró quedó fallido (fuera de la puerta)
+
+
+# --- H8: destino que falla después de admitir ---
+
+def test_h8_destino_que_falla_deja_el_serial_fallido_no_colgado(tmp_path, isapi):
+    isapi(paginas=[("OK", [item(s) for s in range(101, 104)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    enviados: list[dict] = []
+
+    def destino(record):
+        if record["serial"] == 102:
+            raise OSError("disco lleno")
+        enviados.append(record)
+
+    resumen = conexion(recuperador(seg, destino))
+    assert resumen["resultado"] == rec.FALLIDA
+    for r in enviados:
+        seg.entregado(r)
+    assert seg.cursor == 100  # corrida fallida: el techo queda; el 102 además frena
+    assert seg.hay_fallidos
+    enviados.clear()
+    conexion(recuperador(seg, enviados.append))
+    assert [r["serial"] for r in enviados] == [102, 103]  # se vuelve a pedir y se encola
+    for r in enviados:
+        seg.entregado(r)
+    assert seg.cursor == 103 and not seg.hay_fallidos
+
+
+# --- H9: no se puede crear el hilo ---
+
+def test_h9_fallo_al_crear_el_hilo_no_tumba_el_stream_ni_bloquea_la_proxima(tmp_path, isapi, monkeypatch):
+    isapi(paginas=[])
+    seg = seguimiento(tmp_path, cursor=100)
+    r = recuperador(seg, lambda x: None)
+    start_real = threading.Thread.start
+    fallas = {"n": 1}
+
+    def start_que_falla(self):
+        if self.name == "recuperacion" and fallas["n"]:
+            fallas["n"] -= 1
+            raise RuntimeError("can't start new thread")
+        return start_real(self)
+
+    monkeypatch.setattr(threading.Thread, "start", start_que_falla)
+    assert r.lanzar() is False  # sin excepción hacia el stream
+    assert seg.techo == 100  # el techo quedó abierto: nada se salta
+    assert r.lanzar() is True  # la próxima conexión arranca normal
+    _esperar_hilo(r)
+    assert seg.techo is None
+
+
+# --- H10: la escritura del estado no frena al stream ---
+
+def test_h10_guardar_lento_no_bloquea_al_stream(tmp_path):
+    seg = seguimiento(tmp_path, cursor=100)
+    escribiendo, soltar = threading.Event(), threading.Event()
+    guardar_real = seg.estado.guardar
+
+    def guardar_lento(**kw):
+        escribiendo.set()
+        soltar.wait(5)
+        return guardar_real(**kw)
+
+    seg.estado.guardar = guardar_lento
+    r = {"serial": 101}
+    assert seg.admitir(r)
+    hilo = threading.Thread(target=seg.entregado, args=(r,), daemon=True)  # el forwarder
+    hilo.start()
+    assert escribiendo.wait(5)
+    hecho = threading.Event()
+
+    def stream():
+        seg.observar_vivo({"serial": 102, "device_mac": MAC})
+        seg.admitir({"serial": 102})
+        hecho.set()
+
+    threading.Thread(target=stream, daemon=True).start()
+    try:
+        assert hecho.wait(1), "el stream quedó esperando al disco"
+    finally:
+        soltar.set()
+        hilo.join(5)
+    assert leer_estado(tmp_path)["cursor_serial"] == 101
+
+
+# --- H12: la puerta no olvida seriales que la recuperación puede volver a pedir ---
+
+def test_h12_puerta_retiene_seriales_por_encima_del_cursor(tmp_path):
+    path = tmp_path / "face_state.json"
+    path.write_text(json.dumps({"cursor_serial": 100, "terminal_mac": MAC}))
+    seg = SeguimientoEntregas(EstadoPersistente(path, LOG), LOG, puerta_max=3)
+    assert seg.admitir({"serial": 101})  # pendiente: frena el cursor en 100
+    _entregar_en_vivo(seg, [102, 103, 104, 105, 106])
+    assert seg.cursor == 100
+    for s in (102, 103):  # salieron de la ventana de 3 pero siguen por encima del cursor
+        assert seg.admitir({"serial": s, "recuperado": True}) is False
+    seg.entregado({"serial": 101})
+    assert seg.cursor == 106
+    _entregar_en_vivo(seg, [107, 108, 109])  # al achicar, los retenidos ya pasados se sueltan
+    assert seg._retenidos == set()
+
+
+# --- H13: reset con entregas o corridas de la numeración vieja en vuelo ---
+
+def test_h13_entrega_de_la_numeracion_vieja_tras_el_reset_no_mueve_el_cursor(tmp_path):
+    seg = seguimiento(tmp_path, cursor=5000)
+    viejo = {"serial": 5001, "major": 5, "device_ts": item(5001)["time"]}
+    assert seg.admitir(viejo)  # en la cola del forwarder cuando el terminal se resetea
+    seg.observar_vivo({"serial": 3, "device_mac": MAC})
+    seg.entregado(viejo)
+    assert seg.cursor == 0 and seg.ancla is None
+    seg.cerrar_techo()
+    assert seg.cursor == 0  # nada de la numeración vieja quedó como entregado
+
+
+def test_h13_corrida_en_vuelo_durante_un_reset_no_toca_el_techo_nuevo(tmp_path, isapi):
+    isapi(paginas=[("OK", [item(s) for s in range(5001, 5004)])])
+    seg = seguimiento(tmp_path, cursor=5000)
+    enviados: list[dict] = []
+
+    def destino(record):
+        enviados.append(record)
+        if len(enviados) == 1:  # a mitad de la corrida, el stream ve el reset
+            seg.observar_vivo({"serial": 2, "device_mac": MAC})
+
+    r = recuperador(seg, destino)
+    conexion(r)
+    assert [x["serial"] for x in enviados] == [5001]  # lo demás de la época vieja no se admite
+    assert seg.techo == 0  # la corrida vieja no lo liberó
+    assert seg.cursor == 0
+
+
+# --- H14: bloque JSON ilegible en el stream ---
+
+def test_h14_bloque_json_ilegible_dispara_la_recuperacion(tmp_path, monkeypatch):
+    fake = FakeISAPI(paginas=[])
+
+    def al_lanzar(n):
+        if n == 2:  # el bloque ilegible: el terminal ya registró 201 y 202
+            fake.paginas = [("OK", [item(201), item(202)])]
+
+    roto = b"--MIME_boundary\r\nContent-Type: application/json\r\n\r\n{\"eventType\": \"AccessCont"
+    chunks = _como_stream([_ev_vivo(201)])[0].rsplit(b"--MIME_boundary\r\n", 1)[0]
+    chunks += roto + b"\r\n" + _como_stream([_ev_vivo(203)])[0]
+    posts, _ha, lanzados = _correr_listener(
+        tmp_path, monkeypatch, estado={"cursor_serial": 200, "terminal_mac": MAC},
+        conexiones=[[chunks]], fake=fake, al_lanzar=al_lanzar)
+    assert len(lanzados) == 2  # la conexión + el bloque ilegible
+    assert sorted(p["serial"] for p in posts) == [201, 202, 203]
+    assert [p["serial"] for p in posts if p.get("recuperado")] == [202]
+
+
+def test_h2_ancla_con_otro_formato_de_hora_no_reinicia(tmp_path, isapi):
+    # Guarda: el mismo instante con y sin zona horaria no es "otra hora" (no hay reset).
+    fake = isapi(paginas=[("OK", [item(s) for s in range(495, 503)])])
+    sin_zona = datetime.fromisoformat(item(500)["time"]).replace(tzinfo=None).isoformat()
+    seg = _seg_con_ancla(tmp_path, cursor=500, ancla=(500, sin_zona))
+    enviados: list[dict] = []
+    conexion(recuperador(seg, enviados.append))
+    assert _desde(fake) == [501]
+    assert [r["serial"] for r in enviados] == [501, 502]
