@@ -54,7 +54,14 @@ TOPE_ANTIGUEDAD = timedelta(days=7)
 MAX_RESULTS = 30
 MAX_PAGINAS = 100  # 3000 ítems: margen sobre el tope de 1000 (la consulta se corta antes)
 
-# major de AcsEvent: 0 = todos; si el equipo lo rechaza, 5 (control de acceso).
+# Fin del rango de seriales en AcsEvent. Sondeo en el DS-K1T344 (prueba en hardware
+# 2026-10-05): beginSerialNo sin endSerialNo ⇒ 400 {"subStatusCode": "badJsonContent",
+# "errorMsg": "endSerialNo"}; endSerialNo 999999999 ⇒ 200; endSerialNo 4294967295 ⇒ 400
+# (errorMsg "endSerialNo"). Se manda siempre 999999999.
+SERIAL_FIN = 999_999_999
+
+# major de AcsEvent: 0 = todos; si el equipo lo rechaza (400 con errorMsg sobre "major"),
+# 5 (control de acceso).
 MAJOR_TODOS = 0
 MAJOR_ACCESO = 5
 
@@ -519,25 +526,30 @@ class Recuperador:
 
     def _pedir(self, cond: dict) -> dict:
         """Un POST a AcsEvent con ``cond`` + el ``major`` vigente. Devuelve el bloque
-        ``AcsEvent``. Si el equipo rechaza ``major=0`` la primera vez, cae a ``major=5`` y lo
-        recuerda para el resto del proceso (log una sola vez)."""
+        ``AcsEvent``. Si el equipo rechaza ``major=0`` la primera vez (400 con un ``errorMsg``
+        que menciona ``major``), cae a ``major=5`` y lo recuerda para el resto del proceso
+        (log una sola vez). Cualquier otro rechazo aborta la corrida (el techo protege)."""
         while True:
             major = self._major if self._major is not None else MAJOR_TODOS
             body = {"AcsEventCond": {**cond, "major": major, "minor": 0}}
             resp = self._http("POST", "/ISAPI/AccessControl/AcsEvent?format=json", body)
             acs = self._cuerpo(resp)
-            if acs is None and self._major is None:
+            if acs is not None:
+                break
+            error = self._error_msg(resp)
+            if self._major is None and resp.status_code == 400 and "major" in error.lower():
                 self.log.warning(
-                    "AcsEvent rechazó major=0 (HTTP %s): se recupera solo major=5.", resp.status_code
+                    "AcsEvent rechazó major=0 (HTTP 400, errorMsg %r): se recupera solo major=5.",
+                    error,
                 )
                 self._major = MAJOR_ACCESO
                 continue
-            if acs is None:
-                raise _Abortar(f"respuesta inválida de AcsEvent (HTTP {resp.status_code})")
-            if self._major is None:
-                self._major = major
-                self.log.info("AcsEvent acepta major=%s: se recupera con ese filtro.", major)
-            return acs
+            detalle = f", errorMsg {error!r}" if error else ""
+            raise _Abortar(f"respuesta inválida de AcsEvent (HTTP {resp.status_code}{detalle})")
+        if self._major is None:
+            self._major = major
+            self.log.info("AcsEvent acepta major=%s: se recupera con ese filtro.", major)
+        return acs
 
     @staticmethod
     def _cuerpo(resp: requests.Response) -> Optional[dict]:
@@ -549,6 +561,16 @@ class Recuperador:
             return None
         acs = datos.get("AcsEvent") if isinstance(datos, dict) else None
         return acs if isinstance(acs, dict) else None
+
+    @staticmethod
+    def _error_msg(resp: requests.Response) -> str:
+        """``errorMsg`` del cuerpo de un rechazo ISAPI (texto del equipo, sin datos personales)."""
+        try:
+            datos = resp.json()
+        except ValueError:
+            return ""
+        error = datos.get("errorMsg") if isinstance(datos, dict) else None
+        return error[:200] if isinstance(error, str) else ""
 
     @staticmethod
     def _lista(acs: dict) -> list[dict]:
@@ -567,6 +589,7 @@ class Recuperador:
                 "searchResultPosition": posicion,
                 "maxResults": MAX_RESULTS,
                 "beginSerialNo": desde,
+                "endSerialNo": SERIAL_FIN,
             })
             paginas += 1
             lista = self._lista(acs)

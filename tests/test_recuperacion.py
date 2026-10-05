@@ -59,11 +59,16 @@ class FakeResp:
         return self._data
 
 
+def _rechazo(error_msg: str) -> dict:
+    return {"statusCode": 6, "statusString": "Invalid Content", "subStatusCode": "badJsonContent",
+            "errorCode": 1610612737, "errorMsg": error_msg}
+
+
 class FakeISAPI:
     """Fake de requests.request para AcsEvent + deviceInfo. Registra cada llamada."""
 
     def __init__(self, *, paginas=None, mac=MAC, rechaza_major0=False, status_acs=200,
-                 status_info=200, reciente=None, info_xml=False):
+                 status_info=200, reciente=None, info_xml=False, error_400=None):
         self.paginas = list(paginas or [])  # lista de (estado, items)
         self.mac = mac
         self.rechaza_major0 = rechaza_major0
@@ -71,6 +76,7 @@ class FakeISAPI:
         self.status_info = status_info
         self.reciente = reciente  # items para la consulta timeReverseOrder
         self.info_xml = info_xml  # deviceInfo como el DS-K1T344 real: XML aunque se pida JSON
+        self.error_400 = error_400  # errorMsg de un 400 forzado en toda consulta AcsEvent
         self.llamadas: list[tuple[str, str, dict | None, dict]] = []
 
     def __call__(self, metodo, url, json=None, **kwargs):  # noqa: A002 (firma de requests)
@@ -89,8 +95,13 @@ class FakeISAPI:
         cond = json["AcsEventCond"]
         if self.status_acs != 200:
             return FakeResp(self.status_acs)
+        if self.error_400 is not None:
+            return FakeResp(400, _rechazo(self.error_400))
+        # Como el DS-K1T344 real (sondeo 2026-10-05): beginSerialNo exige endSerialNo.
+        if "beginSerialNo" in cond and "endSerialNo" not in cond:
+            return FakeResp(400, _rechazo("endSerialNo"))
         if self.rechaza_major0 and cond["major"] == 0:
-            return FakeResp(400, {"statusCode": 6, "subStatusCode": "badParameters"})
+            return FakeResp(400, _rechazo("major"))
         if cond.get("timeReverseOrder"):
             items = self.reciente or []
             return FakeResp(200, {"AcsEvent": {"responseStatusStrg": "OK" if items else "NO MATCH",
@@ -293,7 +304,7 @@ def test_paginacion_more_y_reorden_por_serial(tmp_path, isapi):
     conds = [c[2]["AcsEventCond"] for c in fake.acs()]
     assert [c["searchResultPosition"] for c in conds] == [0, 30, 60]
     assert {c["beginSerialNo"] for c in conds} == {101}
-    assert all("endSerialNo" not in c for c in conds)
+    assert all(c["endSerialNo"] == rec.SERIAL_FIN for c in conds)  # el DS-K1T344 lo exige
     assert len({c["searchID"] for c in conds}) == 1
     assert all(c["maxResults"] == 30 for c in conds)
     assert [r["serial"] for r in enviados] == list(range(101, 166))
@@ -869,3 +880,61 @@ def test_primer_arranque_no_abre_techo(tmp_path, isapi):
     assert seg.techo is None
     _entregar_en_vivo(seg, [501])
     assert seg.cursor == 501
+
+
+# ---------------------------------------------------------------------------
+# (r)-(t) endSerialNo obligatorio y fallback de major solo por errorMsg "major"
+# ---------------------------------------------------------------------------
+
+def test_consulta_por_serial_manda_begin_y_end_serial(tmp_path, isapi):
+    pagina = rec.MAX_RESULTS
+    fake = isapi(paginas=[("MORE", [item(s) for s in range(101, 101 + pagina)]),
+                          ("OK", [item(101 + pagina)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    resumen = recuperador(seg, lambda r: None).correr()
+    conds = [c[2]["AcsEventCond"] for c in fake.acs()]
+    assert len(conds) == 2
+    assert all(c["beginSerialNo"] == 101 and c["endSerialNo"] == 999999999 for c in conds)
+    assert rec.SERIAL_FIN == 999999999
+    assert resumen["encolados"] == pagina + 1
+
+
+def test_inicializacion_por_tiempo_sin_campos_de_serial(tmp_path, isapi):
+    fake = isapi(reciente=[item(500)])
+    seg = seguimiento(tmp_path, cursor=None, mac=None)
+    recuperador(seg, lambda r: None).correr()
+    cond = fake.acs()[0][2]["AcsEventCond"]
+    assert cond["timeReverseOrder"] is True
+    assert "beginSerialNo" not in cond and "endSerialNo" not in cond
+    assert seg.cursor == 500
+
+
+def test_400_end_serial_aborta_sin_fallback_a_major5(tmp_path, isapi, caplog):
+    fake = isapi(error_400="endSerialNo", paginas=[("OK", [item(101)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    r = recuperador(seg, lambda rec_: None)
+    with caplog.at_level(logging.WARNING):
+        resumen = r.correr()
+    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0]
+    assert resumen["encolados"] == 0
+    assert r._major is None  # no se fijó major=5
+    assert "rechazó major=0" not in caplog.text
+    assert "HTTP 400, errorMsg 'endSerialNo'" in caplog.text
+    assert seg.techo == 100  # fallida: el techo protege
+
+
+def test_400_major_cae_a_major5_y_loguea_el_error_msg(tmp_path, isapi, caplog):
+    fake = isapi(rechaza_major0=True, paginas=[("OK", [item(101)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    with caplog.at_level(logging.WARNING):
+        resumen = recuperador(seg, lambda r: None).correr()
+    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0, 5]
+    assert resumen["encolados"] == 1
+    assert "errorMsg 'major'" in caplog.text
+
+
+def test_400_sin_error_msg_aborta_sin_fallback(tmp_path, isapi):
+    fake = isapi(status_acs=400, paginas=[("OK", [item(101)])])
+    seg = seguimiento(tmp_path, cursor=100)
+    recuperador(seg, lambda r: None).correr()
+    assert [c[2]["AcsEventCond"]["major"] for c in fake.acs()] == [0]

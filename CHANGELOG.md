@@ -39,6 +39,12 @@ versionado siguiendo [SemVer](https://semver.org/lang/es/).
   tope ⇒ sube al mayor serial admitido; fallida ⇒ queda. Tras un reinicio se retoma desde el
   cursor persistido congelado (lo entregado en vivo en ese lapso se re-envía y el backend lo
   absorbe como duplicado). El primer arranque no abre techo; un reset de fábrica lo descarta.
+- AcsEvent por serial: el DS-K1T344 exige `endSerialNo` junto con `beginSerialNo` (sin él
+  responde 400 `errorMsg: "endSerialNo"`, que se tomaba como rechazo de `major=0` y la
+  corrida abortaba). Toda consulta por serial manda `endSerialNo = 999999999` (`4294967295`
+  también da 400). La consulta de inicialización es por tiempo y no cambia.
+- Fallback a `major=5` solo si el 400 trae un `errorMsg` que menciona `major`; cualquier otro
+  rechazo aborta la corrida (el techo protege) y el `errorMsg` del equipo se loguea.
 
 ### Changed
 - `BackendForwarder._post_with_retries` devuelve `True` (2xx) / `False` (4xx) para informar
